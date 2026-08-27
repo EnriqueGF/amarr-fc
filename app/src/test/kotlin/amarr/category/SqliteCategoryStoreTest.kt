@@ -21,4 +21,25 @@ class SqliteCategoryStoreTest : StringSpec({
             restored.getCategories() shouldBe setOf(Category("sonarr", "/data/amule/complete"))
         }
     }
+
+    "should persist and delete virtual packs transactionally" {
+        val directory = Files.createTempDirectory("amarr-fc-packs")
+        val pack = PackDownload(
+            hash = "ffeeddccbbaa99887766554433221100",
+            name = "Dragon Ball Super S01 PACK aMule",
+            category = "sonarr",
+            members = listOf(
+                PackMember("00112233445566778899aabbccddeeff", "Dragon Ball Super S01E01.mkv", 100),
+                PackMember("112233445566778899aabbccddeeff00", "Dragon Ball Super S01E02.mkv", 200),
+            ),
+        )
+        SqliteCategoryStore(directory.toString()).use { it.storePack(pack) }
+
+        SqliteCategoryStore(directory.toString()).use { restored ->
+            restored.getPack(pack.hash) shouldBe pack
+            restored.getPacks("sonarr") shouldBe listOf(pack)
+            restored.deletePack(pack.hash)
+            restored.getPack(pack.hash) shouldBe null
+        }
+    }
 })

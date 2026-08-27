@@ -34,4 +34,18 @@ class MagnetLinkTest : StringSpec({
         parsed.size shouldBe 152488462
         parsed.amuleHexHash().uppercase() shouldBe "0320C47B3BAA01F8D5F42CD7C05CE28D"
     }
+
+    "should create and parse a deterministic virtual pack" {
+        val first = MagnetLink.forAmarr(ByteArray(16) { 1 }, "Show S01E01.mkv", 100)
+        val second = MagnetLink.forAmarr(ByteArray(16) { 2 }, "Show S01E02.mkv", 200)
+        val pack = MagnetLink.forAmarrPack("Show S01 PACK", listOf(first, second))
+
+        val restored = MagnetLink.fromString(pack.toString())
+
+        restored shouldBe pack
+        restored.isPack() shouldBe true
+        restored.size shouldBe 300
+        restored.packMembers().map { it.name }.toSet() shouldBe setOf(first.name, second.name)
+        MagnetLink.forAmarrPack("Show S01 PACK", listOf(second, first)).amuleHexHash() shouldBe pack.amuleHexHash()
+    }
 })

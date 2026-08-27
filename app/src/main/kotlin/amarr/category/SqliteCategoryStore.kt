@@ -24,6 +24,7 @@ class SqliteCategoryStore(storePath: String) : CategoryStore, AutoCloseable {
 
         connection = DriverManager.getConnection("jdbc:sqlite:${directory.resolve("amarr-fc.sqlite3")}")
         connection.createStatement().use { statement ->
+            statement.execute("PRAGMA foreign_keys=ON")
             statement.execute("PRAGMA journal_mode=WAL")
             statement.execute("PRAGMA synchronous=FULL")
             statement.execute(
@@ -32,6 +33,28 @@ class SqliteCategoryStore(storePath: String) : CategoryStore, AutoCloseable {
                     hash TEXT PRIMARY KEY,
                     category TEXT NOT NULL,
                     updated_at INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS packs(
+                    hash TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pack_members(
+                    pack_hash TEXT NOT NULL REFERENCES packs(hash) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    member_hash TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    PRIMARY KEY(pack_hash, member_hash)
                 )
                 """.trimIndent()
             )
@@ -101,6 +124,131 @@ class SqliteCategoryStore(storePath: String) : CategoryStore, AutoCloseable {
         statement.executeQuery().use { result ->
             buildSet {
                 while (result.next()) add(Category(result.getString(1), result.getString(2)))
+            }
+        }
+    }
+
+    @Synchronized
+    override fun storePack(pack: PackDownload) {
+        require(pack.hash.matches(Regex("[0-9a-fA-F]{32}"))) { "invalid pack hash" }
+        require(pack.name.isNotBlank()) { "pack name cannot be blank" }
+        require(pack.category.isNotBlank()) { "pack category cannot be blank" }
+        require(pack.members.isNotEmpty()) { "pack must contain members" }
+        require(pack.members.map { it.hash.lowercase() }.distinct().size == pack.members.size) {
+            "pack members must be unique"
+        }
+        require(pack.members.all { it.name.isNotBlank() && it.size > 0 }) { "invalid pack member" }
+        val previousAutoCommit = connection.autoCommit
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement(
+                """
+                INSERT INTO packs(hash, name, category, updated_at) VALUES (?, ?, ?, ?)
+                ON CONFLICT(hash) DO UPDATE SET
+                    name=excluded.name,
+                    category=excluded.category,
+                    updated_at=excluded.updated_at
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, pack.hash.lowercase())
+                statement.setString(2, pack.name)
+                statement.setString(3, pack.category)
+                statement.setLong(4, System.currentTimeMillis())
+                statement.executeUpdate()
+            }
+            connection.prepareStatement("DELETE FROM pack_members WHERE pack_hash=?").use { statement ->
+                statement.setString(1, pack.hash.lowercase())
+                statement.executeUpdate()
+            }
+            connection.prepareStatement(
+                "INSERT INTO pack_members(pack_hash, position, member_hash, name, size) VALUES (?, ?, ?, ?, ?)"
+            ).use { statement ->
+                pack.members.forEachIndexed { index, member ->
+                    require(member.hash.matches(Regex("[0-9a-fA-F]{32}"))) { "invalid member hash" }
+                    statement.setString(1, pack.hash.lowercase())
+                    statement.setInt(2, index)
+                    statement.setString(3, member.hash.lowercase())
+                    statement.setString(4, member.name)
+                    statement.setLong(5, member.size)
+                    statement.addBatch()
+                }
+                statement.executeBatch()
+            }
+            connection.commit()
+        } catch (error: Exception) {
+            connection.rollback()
+            throw error
+        } finally {
+            connection.autoCommit = previousAutoCommit
+        }
+    }
+
+    @Synchronized
+    override fun getPack(hash: String): PackDownload? = connection.prepareStatement(
+        "SELECT hash, name, category FROM packs WHERE hash=?"
+    ).use { statement ->
+        statement.setString(1, hash.take(32).lowercase())
+        statement.executeQuery().use { result ->
+            if (!result.next()) return@use null
+            PackDownload(
+                hash = result.getString("hash"),
+                name = result.getString("name"),
+                category = result.getString("category"),
+                members = getPackMembers(result.getString("hash")),
+            )
+        }
+    }
+
+    @Synchronized
+    override fun getPacks(category: String?): List<PackDownload> {
+        val sql = if (category == null) {
+            "SELECT hash, name, category FROM packs ORDER BY updated_at"
+        } else {
+            "SELECT hash, name, category FROM packs WHERE category=? ORDER BY updated_at"
+        }
+        return connection.prepareStatement(sql).use { statement ->
+            if (category != null) statement.setString(1, category)
+            statement.executeQuery().use { result ->
+                buildList {
+                    while (result.next()) {
+                        val hash = result.getString("hash")
+                        add(
+                            PackDownload(
+                                hash = hash,
+                                name = result.getString("name"),
+                                category = result.getString("category"),
+                                members = getPackMembers(hash),
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    override fun deletePack(hash: String) {
+        connection.prepareStatement("DELETE FROM packs WHERE hash=?").use { statement ->
+            statement.setString(1, hash.take(32).lowercase())
+            statement.executeUpdate()
+        }
+    }
+
+    private fun getPackMembers(hash: String): List<PackMember> = connection.prepareStatement(
+        "SELECT member_hash, name, size FROM pack_members WHERE pack_hash=? ORDER BY position"
+    ).use { statement ->
+        statement.setString(1, hash.lowercase())
+        statement.executeQuery().use { result ->
+            buildList {
+                while (result.next()) {
+                    add(
+                        PackMember(
+                            hash = result.getString("member_hash"),
+                            name = result.getString("name"),
+                            size = result.getLong("size"),
+                        )
+                    )
+                }
             }
         }
     }

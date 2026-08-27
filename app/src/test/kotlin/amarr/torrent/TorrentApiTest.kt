@@ -2,6 +2,8 @@ package amarr.torrent
 
 import amarr.MagnetLink
 import amarr.category.CategoryStore
+import amarr.category.PackDownload
+import amarr.category.PackMember
 import amarr.security.QbitAuth
 import amarr.torrent.model.Category
 import io.kotest.core.spec.style.StringSpec
@@ -37,6 +39,7 @@ class TorrentApiTest : StringSpec({
 
     beforeAny {
         clearAllMocks()
+        categoryStore.reset()
     }
 
     "should get preferences" {
@@ -126,6 +129,135 @@ class TorrentApiTest : StringSpec({
                 this.status shouldBe HttpStatusCode.OK
             }
         }
+    }
+
+    "should expand a virtual season pack into real amule downloads" {
+        val first = MagnetLink.forAmarr(ByteArray(16) { 1 }, "Show S01E01.mkv", 100)
+        val second = MagnetLink.forAmarr(ByteArray(16) { 2 }, "Show S01E02.mkv", 200)
+        val pack = MagnetLink.forAmarrPack("Show S01 PACK aMule", listOf(first, second))
+        every { amuleClient.downloadEd2kLink(first.toEd2kLink()) } returns Result.success(Unit)
+        every { amuleClient.downloadEd2kLink(second.toEd2kLink()) } returns Result.success(Unit)
+
+        testApplication {
+            application {
+                torrentApi(amuleClient, categoryStore, finishedPath)
+                configureForTest()
+            }
+            client.submitForm(formParameters = Parameters.build {
+                append("urls", pack.toString())
+                append("category", "sonarr")
+            }, url = "/api/v2/torrents/add").status shouldBe HttpStatusCode.OK
+        }
+
+        verify(exactly = 1) { amuleClient.downloadEd2kLink(first.toEd2kLink()) }
+        verify(exactly = 1) { amuleClient.downloadEd2kLink(second.toEd2kLink()) }
+        categoryStore.getPack(pack.amuleHexHash()) shouldBe PackDownload(
+            pack.amuleHexHash(),
+            pack.name,
+            "sonarr",
+            listOf(
+                PackMember(first.amuleHexHash(), first.name, first.size),
+                PackMember(second.amuleHexHash(), second.name, second.size),
+            ),
+        )
+    }
+
+    "should expose virtual pack files and aggregate progress" {
+        val first = MagnetLink.forAmarr(ByteArray(16) { 3 }, "Show S01E01.mkv", 100)
+        val second = MagnetLink.forAmarr(ByteArray(16) { 4 }, "Show S01E02.mkv", 300)
+        val packLink = MagnetLink.forAmarrPack("Show S01 PACK aMule", listOf(first, second))
+        categoryStore.storePack(
+            PackDownload(
+                packLink.amuleHexHash(), packLink.name, "sonarr",
+                listOf(
+                    PackMember(first.amuleHexHash(), first.name, first.size),
+                    PackMember(second.amuleHexHash(), second.name, second.size),
+                ),
+            )
+        )
+        every { amuleClient.getDownloadQueue() } returns Result.success(
+            listOf(
+                MockTransferringFile(
+                    fileHashHexString = first.amuleHexHash(), fileName = first.name,
+                    sizeFull = 100, sizeDone = 100, speed = 0, sourceXferCount = 0,
+                ),
+                MockTransferringFile(
+                    fileHashHexString = second.amuleHexHash(), fileName = second.name,
+                    sizeFull = 300, sizeDone = 100, speed = 50, sourceXferCount = 2,
+                    fileStatus = FileStatus.READY,
+                ),
+            )
+        )
+        every { amuleClient.getSharedFiles() } returns Result.success(emptyList())
+
+        testApplication {
+            application {
+                torrentApi(amuleClient, categoryStore, finishedPath)
+                configureForTest()
+            }
+            val info = client.get("/api/v2/torrents/info?category=sonarr")
+            val torrent = Json.parseToJsonElement(info.bodyAsText()).jsonArray.single().jsonObject
+            torrent["hash"]!!.jsonPrimitive.content shouldBe packLink.amuleHexHash()
+            torrent["progress"]!!.jsonPrimitive.content shouldBe "0.5"
+            torrent["dlspeed"]!!.jsonPrimitive.content shouldBe "50"
+            torrent["num_seeds"]!!.jsonPrimitive.content shouldBe "2"
+
+            val files = client.get("/api/v2/torrents/files?hash=${packLink.amuleHexHash()}")
+            Json.parseToJsonElement(files.bodyAsText()).jsonArray.map {
+                it.jsonObject["name"]!!.jsonPrimitive.content
+            } shouldBe listOf(first.name, second.name)
+        }
+    }
+
+    "should materialize a completed pack as a season directory" {
+        val localFinished = Files.createTempDirectory("amarr-pack-complete")
+        val firstPath = Files.writeString(localFinished.resolve("Show S01E01.mkv"), "episode one")
+        val secondPath = Files.writeString(localFinished.resolve("Show S01E02.mkv"), "episode two")
+        val first = MagnetLink.forAmarr(ByteArray(16) { 5 }, firstPath.fileName.toString(), Files.size(firstPath))
+        val second = MagnetLink.forAmarr(ByteArray(16) { 6 }, secondPath.fileName.toString(), Files.size(secondPath))
+        val packLink = MagnetLink.forAmarrPack("Show S01 PACK aMule", listOf(first, second))
+        categoryStore.storePack(
+            PackDownload(
+                packLink.amuleHexHash(), packLink.name, "sonarr",
+                listOf(
+                    PackMember(first.amuleHexHash(), first.name, first.size),
+                    PackMember(second.amuleHexHash(), second.name, second.size),
+                ),
+            )
+        )
+        every { amuleClient.getDownloadQueue() } returns Result.success(emptyList())
+        every { amuleClient.getSharedFiles() } returns Result.success(
+            listOf(
+                MockTransferringFile(
+                    fileHashHexString = first.amuleHexHash(), fileName = first.name,
+                    filePath = firstPath.toString(), sizeFull = first.size,
+                ),
+                MockTransferringFile(
+                    fileHashHexString = second.amuleHexHash(), fileName = second.name,
+                    filePath = secondPath.toString(), sizeFull = second.size,
+                ),
+            )
+        )
+
+        testApplication {
+            application {
+                torrentApi(
+                    amuleClient, categoryStore, finishedPath,
+                    localFinishedPath = localFinished.toString(),
+                )
+                configureForTest()
+            }
+            val response = client.get("/api/v2/torrents/info?category=sonarr")
+            val torrent = Json.parseToJsonElement(response.bodyAsText()).jsonArray.single().jsonObject
+            torrent["progress"]!!.jsonPrimitive.content shouldBe "1.0"
+            torrent["state"]!!.jsonPrimitive.content shouldBe "uploading"
+            torrent["content_path"]!!.jsonPrimitive.content shouldBe
+                "/finished/.amarr-packs/${packLink.amuleHexHash()}"
+        }
+
+        val packDirectory = localFinished.resolve(".amarr-packs").resolve(packLink.amuleHexHash())
+        Files.isSameFile(firstPath, packDirectory.resolve(first.name)) shouldBe true
+        Files.isSameFile(secondPath, packDirectory.resolve(second.name)) shouldBe true
     }
 
     "should get categories" {
@@ -360,6 +492,13 @@ private class MemoryCategoryStore() : CategoryStore {
 
     private val categories = mutableSetOf<Category>()
     private val hashes = mutableMapOf<String, String>()
+    private val packs = mutableMapOf<String, PackDownload>()
+
+    fun reset() {
+        categories.clear()
+        hashes.clear()
+        packs.clear()
+    }
 
     override fun store(category: String, hash: String) {
         hashes[hash] = category
@@ -379,6 +518,19 @@ private class MemoryCategoryStore() : CategoryStore {
 
     override fun getCategories(): Set<Category> {
         return categories
+    }
+
+    override fun storePack(pack: PackDownload) {
+        packs[pack.hash.lowercase()] = pack
+    }
+
+    override fun getPack(hash: String): PackDownload? = packs[hash.take(32).lowercase()]
+
+    override fun getPacks(category: String?): List<PackDownload> = packs.values
+        .filter { category == null || it.category == category }
+
+    override fun deletePack(hash: String) {
+        packs.remove(hash.take(32).lowercase())
     }
 
 }

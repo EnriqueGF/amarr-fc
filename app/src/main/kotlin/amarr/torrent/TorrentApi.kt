@@ -19,8 +19,9 @@ fun Application.torrentApi(
     finishedPath: String,
     auth: QbitAuth = QbitAuth.disabled(),
     amuleMutex: Mutex = Mutex(),
+    localFinishedPath: String = "/incoming",
 ) {
-    val service = TorrentService(amuleClient, categoryStore, finishedPath, log, amuleMutex)
+    val service = TorrentService(amuleClient, categoryStore, finishedPath, log, amuleMutex, localFinishedPath)
     routing {
         get("/api/v2/app/webapiVersion") {
             if (!call.requireQbitAuth(auth)) return@get
@@ -102,7 +103,7 @@ fun Application.torrentApi(
             if (!call.requireQbitAuth(auth)) return@get
             val hash = call.request.queryParameters["hash"]!!
             call.application.log.debug("Received get files request with hash: {}", hash)
-            val response = listOf(service.getFile(hash))
+            val response = service.getFiles(hash)
             call.respond(response)
         }
         get("/api/v2/torrents/properties") {

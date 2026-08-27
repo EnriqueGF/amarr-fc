@@ -75,7 +75,7 @@ class AmuleIndexer(
         // 1x02, T01E02 and season packs. TV searches must only expose semantic
         // matches: returning another season is worse than returning no result.
         val files = if (tvCriteria != null) semanticMatches else titleRelevantFiles
-        return buildFeed(files, offset, limit, resultCategory(cat))
+        return buildFeed(files, offset, limit, resultCategory(cat), cleanQuery, tvCriteria)
     }
 
     override suspend fun capabilities(): Caps = Caps()
@@ -212,31 +212,91 @@ class AmuleIndexer(
     private fun resultCategory(categories: List<Int>): String =
         categories.firstOrNull { it in 2000..2999 || it in 5000..5999 }?.toString() ?: TV_CATEGORY
 
-    private fun buildFeed(items: List<SearchFile>, offset: Int, limit: Int, category: String) = Feed(
-        channel = Feed.Channel(
-            response = Feed.Channel.Response(
-                offset = offset,
-                total = items.size
-            ),
-            item = items
-                .drop(offset)
-                .take(limit)
-                .map { result ->
-                    Item(
-                        title = result.fileName,
-                        enclosure = Item.Enclosure(
-                            url = MagnetLink.forAmarr(result.hash, result.fileName, result.sizeFull).toString(),
-                            length = result.sizeFull
-                        ),
-                        attributes = listOf(
-                            Item.TorznabAttribute("category", category),
-                            Item.TorznabAttribute("seeders", result.completeSourceCount.toString()),
-                            Item.TorznabAttribute("peers", result.sourceCount.toString()),
-                            Item.TorznabAttribute("size", result.sizeFull.toString())
-                        )
-                    )
-                }
+    private fun buildFeed(
+        items: List<SearchFile>,
+        offset: Int,
+        limit: Int,
+        category: String,
+        query: String,
+        tvCriteria: TvCriteria?,
+    ): Feed {
+        val individualItems = items.map { result ->
+            Item(
+                title = result.fileName,
+                enclosure = Item.Enclosure(
+                    url = MagnetLink.forAmarr(result.hash, result.fileName, result.sizeFull).toString(),
+                    length = result.sizeFull
+                ),
+                attributes = resultAttributes(
+                    category,
+                    result.completeSourceCount.toInt(),
+                    result.sourceCount.toInt(),
+                    result.sizeFull,
+                ),
+            )
+        }
+        val virtualPack = tvCriteria
+            ?.takeIf { it.episode == null }
+            ?.let { createVirtualPack(items, query, it.season, category) }
+        val feedItems = listOfNotNull(virtualPack) + individualItems
+        return Feed(
+            channel = Feed.Channel(
+                response = Feed.Channel.Response(offset = offset, total = feedItems.size),
+                item = feedItems.drop(offset).take(limit),
+            )
         )
+    }
+
+    private fun createVirtualPack(
+        files: List<SearchFile>,
+        query: String,
+        season: Int,
+        category: String,
+    ): Item? {
+        val selectedByEpisode = linkedMapOf<Int, SearchFile>()
+        files.forEach { file ->
+            episodeNumber(file.fileName, season)?.let { episode -> selectedByEpisode.putIfAbsent(episode, file) }
+        }
+        val episodes = selectedByEpisode.keys.sorted()
+        if (episodes.size < 2 || episodes != (1..episodes.last()).toList()) return null
+        val selected = episodes.map { selectedByEpisode.getValue(it) }
+        val packName = "$query S${season.toString().padStart(2, '0')} PACK aMule"
+        val pack = MagnetLink.forAmarrPack(
+            packName,
+            selected.map { MagnetLink.forAmarr(it.hash, it.fileName, it.sizeFull) },
+        )
+        return Item(
+            title = packName,
+            enclosure = Item.Enclosure(url = pack.toString(), length = pack.size),
+            attributes = resultAttributes(
+                category = category,
+                seeders = selected.minOf { it.completeSourceCount }.toInt(),
+                peers = selected.minOf { it.sourceCount }.toInt(),
+                size = pack.size,
+            ),
+        )
+    }
+
+    private fun episodeNumber(fileName: String, season: Int): Int? {
+        val name = Normalizer.normalize(fileName, Normalizer.Form.NFD)
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+            .lowercase()
+        val separator = "[ ._\\-]*"
+        val patterns = listOf(
+            Regex("(?<![a-z0-9])(?:s|t)0*$season${separator}e0*([0-9]+)(?![0-9])"),
+            Regex("(?<![0-9])0*$season${separator}x${separator}0*([0-9]+)(?![0-9])"),
+            Regex("(?<![a-z0-9])(?:cap(?:itulo)?|episodio|episode)$separator" + season + "([0-9]{2})(?![0-9])"),
+        )
+        return patterns.firstNotNullOfOrNull { pattern ->
+            pattern.find(name)?.groupValues?.get(1)?.toIntOrNull()
+        }?.takeIf { it in 1..999 }
+    }
+
+    private fun resultAttributes(category: String, seeders: Int, peers: Int, size: Long) = listOf(
+        Item.TorznabAttribute("category", category),
+        Item.TorznabAttribute("seeders", seeders.toString()),
+        Item.TorznabAttribute("peers", peers.toString()),
+        Item.TorznabAttribute("size", size.toString()),
     )
 
     companion object {

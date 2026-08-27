@@ -2,6 +2,7 @@ package amarr
 
 import com.google.common.io.BaseEncoding.base32
 import io.ktor.http.*
+import java.security.MessageDigest
 
 data class MagnetLink(
     private val hash: ByteArray,
@@ -22,6 +23,12 @@ data class MagnetLink(
     fun isAmarr(): Boolean {
         return trackers.contains(AMARR_TRACKER)
     }
+
+    fun packMembers(): List<MagnetLink> = trackers
+        .filter { it.startsWith("ed2k://|file|") }
+        .map(::fromEd2k)
+
+    fun isPack(): Boolean = packMembers().isNotEmpty()
 
     override fun toString(): String {
         // pad the hash to ensure a size of 160 bits
@@ -58,11 +65,25 @@ data class MagnetLink(
 
     companion object {
         fun forAmarr(hash: ByteArray, name: String, size: Long) = MagnetLink(
-            hash = hash,
+            hash = hash.copyOf(16),
             name = name,
             size = size,
             trackers = listOf(AMARR_TRACKER)
         )
+
+        fun forAmarrPack(name: String, members: List<MagnetLink>): MagnetLink {
+            require(members.size >= 2) { "a virtual pack needs at least two files" }
+            val distinctMembers = members.distinctBy { it.amuleHexHash() }.sortedBy { it.amuleHexHash() }
+            require(distinctMembers.size == members.size) { "a virtual pack cannot contain duplicate files" }
+            val digest = MessageDigest.getInstance("SHA-256")
+            distinctMembers.forEach { digest.update(it.amuleHexHash().toByteArray(Charsets.US_ASCII)) }
+            return MagnetLink(
+                hash = digest.digest().copyOf(16),
+                name = name,
+                size = distinctMembers.sumOf { it.size },
+                trackers = listOf(AMARR_TRACKER) + distinctMembers.map { it.toEd2kLink() },
+            )
+        }
 
         fun fromString(magnet: String): MagnetLink = magnet
             .substringAfter("magnet:?")
@@ -70,7 +91,11 @@ data class MagnetLink(
             .filter { it.matches(Regex(".+=.+")) }
             .map { val els = it.split("="); els[0] to els[1] }
             .let { params ->
-                val hash = base32().decode(params.first { it.first == "xt" }.second.substringAfter("urn:btih:"))
+                // aMule/eD2k hashes are 128-bit. Magnet links carry the value in a
+                // padded 160-bit BTIH field for qBittorrent compatibility.
+                val hash = base32()
+                    .decode(params.first { it.first == "xt" }.second.substringAfter("urn:btih:"))
+                    .copyOf(16)
                 MagnetLink(
                     hash = hash,
                     name = params.first { it.first == "dn" }.second.decodeURLPart(),

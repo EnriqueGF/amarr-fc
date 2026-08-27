@@ -187,6 +187,29 @@ class AmuleIndexerTest : StringSpec({
         result.channel.item shouldBe emptyList()
     }
 
+    "should advertise a contiguous season as a downloadable virtual pack" {
+        val files = listOf(
+            searchFile("Dragon Ball Super S01E01 1080p.mkv", 1),
+            searchFile("Dragon Ball Super 1x02 1080p.mkv", 2),
+            searchFile("Dragon Ball Super T01E03 1080p.mkv", 3),
+            searchFile("Dragon Ball Super S02E01 1080p.mkv", 4),
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(files))
+
+        val result = AmuleIndexer(mockClient, logger).searchTv("Dragon Ball Super", 1, null, 0, 100, emptyList())
+        val packItem = result.channel.item.first()
+        val pack = MagnetLink.fromString(packItem.enclosure.url)
+
+        packItem.title shouldBe "Dragon Ball Super S01 PACK aMule"
+        pack.isPack() shouldBe true
+        pack.packMembers().map { it.name }.toSet() shouldBe setOf(
+            "Dragon Ball Super S01E01 1080p.mkv",
+            "Dragon Ball Super 1x02 1080p.mkv",
+            "Dragon Ball Super T01E03 1080p.mkv",
+        )
+        result.channel.response.total shouldBe 4
+    }
+
     "should return a movie category requested by Radarr" {
         val file = searchFile("Movie 2026.mkv", 1)
         every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(file)))
