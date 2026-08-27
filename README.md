@@ -47,3 +47,10 @@ docker build -t amarr-fc:local .
 Deployment files and configuration examples live in [`deploy/`](deploy/).
 The complete runtime design is documented in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+Create a mode-0600 runtime environment without committing secrets:
+
+```bash
+cd deploy
+AMULE_PASSWORD='existing EC password' ./install-env.sh .env
+```
