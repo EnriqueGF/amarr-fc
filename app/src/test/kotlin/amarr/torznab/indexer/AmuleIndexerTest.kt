@@ -139,6 +139,7 @@ class AmuleIndexerTest : StringSpec({
 
         verify(exactly = 1) { mockClient.searchSync("Muertos SL", SearchType.GLOBAL) }
         result.channel.item.map { it.title }.shouldContainExactlyInAnyOrder(
+            "Muertos SL S01 PACK HDTV-1080p aMule",
             "Muertos SL S01E02.mkv",
             "Muertos.SL.1x06.1080p.mkv",
             "Muertos SL T01E08 Castellano.mkv",
@@ -225,6 +226,21 @@ class AmuleIndexerTest : StringSpec({
             "Muertos SL 1x01.mkv",
             "Muertos SL 1x02.mkv",
         )
+    }
+
+    "should create a partial virtual pack when the network has episode gaps" {
+        val files = listOf(
+            searchFile("Dragon Ball Super S01E01 1080p.mkv", 1),
+            searchFile("Dragon Ball Super S01E03 1080p.mkv", 2),
+            searchFile("Dragon Ball Super S01E08 1080p.mkv", 3),
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(files))
+
+        val result = AmuleIndexer(mockClient, logger)
+            .searchTv("Dragon Ball Super", 1, null, 0, 100, emptyList())
+        val pack = MagnetLink.fromString(result.channel.item.first().enclosure.url)
+
+        pack.packMembers().map { it.name }.toSet() shouldBe files.map { it.fileName }.toSet()
     }
 
     "should return a movie category requested by Radarr" {

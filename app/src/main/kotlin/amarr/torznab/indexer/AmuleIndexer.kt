@@ -258,7 +258,7 @@ class AmuleIndexer(
             episodeNumber(file.fileName, season)?.let { episode -> selectedByEpisode.putIfAbsent(episode, file) }
         }
         val episodes = selectedByEpisode.keys.sorted()
-        if (episodes.size < 2 || episodes != (1..episodes.last()).toList()) return null
+        if (episodes.size < 2) return null
         val selected = episodes.map { selectedByEpisode.getValue(it) }
         val resolution = dominantResolution(selected)
         val packName = "$query S${season.toString().padStart(2, '0')} PACK HDTV-${resolution}p aMule"
