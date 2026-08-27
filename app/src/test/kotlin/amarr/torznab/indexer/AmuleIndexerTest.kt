@@ -160,11 +160,22 @@ class AmuleIndexerTest : StringSpec({
         val result = AmuleIndexer(mockClient, logger).searchTv("Muertos SL", 1, 3, 0, 100, emptyList())
 
         result.channel.item.map { it.title }.shouldContainExactlyInAnyOrder(
-            "Death Inc S01E03.mkv",
             "Muertos SL 1x03 Castellano.mkv",
             "Muertos SL T01E03 1080p.mkv",
             "Muertos SL Capitulo 103.mkv",
         )
+    }
+
+    "should reject Kad false positives that only contain part of the title" {
+        val files = listOf(
+            searchFile("Dr Death 1x03 The Incident.mkv", 1),
+            searchFile("Love and Death S01E03.mkv", 2),
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(files))
+
+        val result = AmuleIndexer(mockClient, logger).searchTv("Death Inc", 1, null, 0, 100, emptyList())
+
+        result.channel.item shouldBe emptyList()
     }
 
     "should preserve broad results when filenames have no recognizable season marker" {

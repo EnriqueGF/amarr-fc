@@ -62,13 +62,19 @@ class AmuleIndexer(
             .distinctBy { file -> file.hash.joinToString("") { "%02x".format(it) } }
             .sortedByDescending { score(it, cleanQuery, tvCriteria) }
             .toList()
+        val titleMatches = rankedFiles.filter { matchesTitle(it.fileName, cleanQuery) }
+        val titleRelevantFiles = when {
+            titleMatches.isNotEmpty() -> titleMatches
+            tvCriteria != null -> emptyList()
+            else -> rankedFiles
+        }
         val semanticMatches = tvCriteria?.let { criteria ->
-            rankedFiles.filter { tvMatchStrength(it.fileName, criteria) > 0 }
+            titleRelevantFiles.filter { tvMatchStrength(it.fileName, criteria) > 0 }
         }.orEmpty()
         // Kad searches are deliberately broad so one network request covers S01E02,
         // 1x02, T01E02 and season packs. If any semantic matches exist, keep only
         // those; otherwise preserve the broad results as a compatibility fallback.
-        val files = if (semanticMatches.isNotEmpty()) semanticMatches else rankedFiles
+        val files = if (semanticMatches.isNotEmpty()) semanticMatches else titleRelevantFiles
         return buildFeed(files, offset, limit, resultCategory(cat))
     }
 
@@ -122,10 +128,8 @@ class AmuleIndexer(
     }
 
     private fun score(file: SearchFile, query: String, tvCriteria: TvCriteria?): Long {
-        val normalizedName = normalizeSearchQuery(file.fileName).lowercase()
-        val matchedTokens = query.lowercase().split(' ')
-            .filter { it.length >= 2 }
-            .count { normalizedName.contains(it) }
+        val nameTokens = normalizedTokens(file.fileName)
+        val matchedTokens = titleTokens(query).count { it in nameTokens }
         return (tvCriteria?.let { tvMatchStrength(file.fileName, it) } ?: 0) * 100_000_000L +
             matchedTokens * 1_000_000L +
             file.completeSourceCount * 10_000L +
@@ -136,9 +140,25 @@ class AmuleIndexer(
     private fun normalizeSearchQuery(query: String): String =
         Normalizer.normalize(query, Normalizer.Form.NFD)
             .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
-            .replace(Regex("[^\\w\\s]+"), " ")
+            .replace(Regex("[^\\p{L}\\p{N}\\s]+"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
+
+    private fun matchesTitle(fileName: String, query: String): Boolean {
+        val expected = titleTokens(query)
+        if (expected.isEmpty()) return true
+        val actual = normalizedTokens(fileName)
+        return expected.all { it in actual }
+    }
+
+    private fun normalizedTokens(text: String): Set<String> =
+        normalizeSearchQuery(text).lowercase().split(' ').filter { it.isNotBlank() }.toSet()
+
+    private fun titleTokens(query: String): List<String> {
+        val tokens = normalizedTokens(query).filter { it.length >= 2 }
+        val significant = tokens.filterNot { it in TITLE_STOP_WORDS }
+        return if (significant.isNotEmpty()) significant else tokens
+    }
 
     private fun tvMatchStrength(fileName: String, criteria: TvCriteria): Long {
         val name = Normalizer.normalize(fileName, Normalizer.Form.NFD)
@@ -251,6 +271,9 @@ class AmuleIndexer(
         )
         private const val MIN_VIDEO_SIZE_BYTES = 50L * 1024L * 1024L
         private const val TV_CATEGORY = "5030"
+        private val TITLE_STOP_WORDS = setOf(
+            "a", "al", "and", "de", "del", "el", "en", "la", "las", "los", "of", "the", "un", "una", "y"
+        )
 
         private val EMPTY_QUERY_RESPONSE = Feed(
             channel = Feed.Channel(
