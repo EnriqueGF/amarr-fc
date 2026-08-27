@@ -114,7 +114,13 @@ private suspend fun ApplicationCall.performQueries(
 }
 
 private fun ApplicationCall.searchQueries(query: String, mode: SearchMode): List<String> {
-    if (mode != SearchMode.Tv || query.isBlank()) {
+    // Torznab clients probe an indexer with an empty query before saving it.
+    // aMule cannot perform an empty search, so use a stable TV-shaped probe
+    // that returns genuine network results without adding a download.
+    if (query.isBlank()) {
+        return listOf(EMPTY_QUERY_PROBE)
+    }
+    if (mode != SearchMode.Tv) {
         return listOf(query)
     }
     val season = request.queryParameters["season"]?.toIntOrNull() ?: return listOf(query)
@@ -133,3 +139,5 @@ private enum class SearchMode {
     Default,
     Tv
 }
+
+private const val EMPTY_QUERY_PROBE = "S01E01"

@@ -80,6 +80,17 @@ class TorznabApiTest : StringSpec({
         }
     }
 
+    "should use a safe probe for Torznab validation searches" {
+        testApplication {
+            application {
+                torznabApi(amuleIndexer, ddunlimitednetIndexer)
+            }
+            coEvery { amuleIndexer.search("S01E01", 0, 100, listOf(5030)) } returns emptyFeed()
+            client.get("/api?t=search&cat=5030")
+            coVerify { amuleIndexer.search("S01E01", 0, 100, listOf(5030)) }
+        }
+    }
+
     "should issue one precise tv query using Sonarr's ep parameter" {
         testApplication {
             application {

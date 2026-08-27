@@ -9,6 +9,9 @@ class SqliteCategoryStoreTest : StringSpec({
     "should persist download ownership and categories across restarts" {
         val directory = Files.createTempDirectory("amarr-fc-state")
         SqliteCategoryStore(directory.toString()).use { store ->
+            Files.isDirectory(directory.resolve("native")) shouldBe true
+            System.getProperty("org.sqlite.tmpdir") shouldBe directory.resolve("native").toString()
+            System.getProperty("jansi.tmpdir") shouldBe directory.resolve("native").toString()
             store.addCategory(Category("sonarr", "/data/amule/complete"))
             store.store("sonarr", "00112233445566778899aabbccddeeff")
         }

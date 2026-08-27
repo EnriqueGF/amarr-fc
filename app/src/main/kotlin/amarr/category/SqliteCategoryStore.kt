@@ -13,6 +13,15 @@ class SqliteCategoryStore(storePath: String) : CategoryStore, AutoCloseable {
     init {
         val directory = Path.of(storePath)
         Files.createDirectories(directory)
+
+        // Docker commonly mounts /tmp with noexec. sqlite-jdbc extracts its native
+        // library before loading it, so keep that extraction beside the database
+        // on the persistent, executable config volume instead.
+        val nativeDirectory = directory.resolve("native")
+        Files.createDirectories(nativeDirectory)
+        System.setProperty("org.sqlite.tmpdir", nativeDirectory.toString())
+        System.setProperty("jansi.tmpdir", nativeDirectory.toString())
+
         connection = DriverManager.getConnection("jdbc:sqlite:${directory.resolve("amarr-fc.sqlite3")}")
         connection.createStatement().use { statement ->
             statement.execute("PRAGMA journal_mode=WAL")

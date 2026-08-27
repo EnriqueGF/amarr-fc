@@ -10,6 +10,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import jamule.AmuleClient
+import jamule.request.SearchType
 import jamule.response.SearchResultsResponse
 import jamule.response.SearchResultsResponse.SearchFile
 import org.slf4j.LoggerFactory
@@ -45,10 +46,10 @@ class AmuleIndexerTest : StringSpec({
             sourceCount = 2,
             downloadStatus = SearchResultsResponse.SearchFileDownloadStatus.NEW,
         )
-        every { mockClient.searchSync(any()) } returns Result.success(SearchResultsResponse(listOf(searchFile)))
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(searchFile)))
         val indexer = AmuleIndexer(mockClient, logger)
         val result = indexer.search("test", 0, 1000, listOf())
-        verify { mockClient.searchSync("test") }
+        verify { mockClient.searchSync("test", SearchType.GLOBAL) }
         result.channel.response.total shouldBe 1
         result.channel.response.offset shouldBe 0
         result.channel.item.size shouldBe 1
@@ -75,7 +76,7 @@ class AmuleIndexerTest : StringSpec({
         val nfoFile = videoFile.copy(fileName = "matrix.nfo")
         val zipFile = videoFile.copy(fileName = "matrix.zip")
         val mp3File = videoFile.copy(fileName = "matrix.mp3")
-        every { mockClient.searchSync(any()) } returns Result.success(
+        every { mockClient.searchSync(any(), any()) } returns Result.success(
             SearchResultsResponse(listOf(videoFile, nfoFile, zipFile, mp3File))
         )
 
@@ -87,22 +88,37 @@ class AmuleIndexerTest : StringSpec({
     }
 
     "should normalize query accents and punctuation before searching amule" {
-        every { mockClient.searchSync(any()) } returns Result.success(SearchResultsResponse(emptyList()))
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(emptyList()))
 
         val indexer = AmuleIndexer(mockClient, logger)
         indexer.search("C'est un complot", 0, 1000, listOf())
 
-        verify { mockClient.searchSync("C est un complot") }
+        verify { mockClient.searchSync("C est un complot", SearchType.GLOBAL) }
     }
 
     "should cache identical searches to protect the aMule global search slot" {
-        every { mockClient.searchSync(any()) } returns Result.success(SearchResultsResponse(emptyList()))
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(emptyList()))
         val indexer = AmuleIndexer(mockClient, logger, cacheSeconds = 60)
 
         indexer.search("The Show S01E02", 0, 100, emptyList())
         indexer.search("The Show S01E02", 0, 100, emptyList())
 
-        verify(exactly = 1) { mockClient.searchSync("The Show S01E02") }
+        verify(exactly = 1) { mockClient.searchSync("The Show S01E02", SearchType.GLOBAL) }
+    }
+
+    "should fall back to Kad when no eD2k server is connected" {
+        every { mockClient.searchSync("fallback", SearchType.GLOBAL) } returns Result.failure(
+            IllegalStateException("eD2k unavailable")
+        )
+        every { mockClient.searchSync("fallback", SearchType.KAD) } returns Result.success(
+            SearchResultsResponse(emptyList())
+        )
+
+        val indexer = AmuleIndexer(mockClient, logger)
+        indexer.search("fallback", 0, 100, emptyList())
+
+        verify(exactly = 1) { mockClient.searchSync("fallback", SearchType.GLOBAL) }
+        verify(exactly = 1) { mockClient.searchSync("fallback", SearchType.KAD) }
     }
 
 })

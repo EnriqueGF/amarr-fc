@@ -6,6 +6,7 @@ import amarr.torznab.model.Feed
 import amarr.torznab.model.Feed.Channel.Item
 import io.ktor.util.logging.*
 import jamule.AmuleClient
+import jamule.request.SearchType
 import jamule.response.SearchResultsResponse.SearchFile
 import java.text.Normalizer
 import java.util.concurrent.ConcurrentHashMap
@@ -60,7 +61,21 @@ class AmuleIndexer(
             cached(key)?.let { return@withLock it }
             log.info("Running serialized aMule search for: {}", cleanQuery)
             val files = withContext(Dispatchers.IO) {
-                amuleClient.searchSync(cleanQuery).getOrThrow().files
+                // jaMule may either throw directly or return Result.failure,
+                // depending on whether the EC server rejects the request.
+                val global = runCatching {
+                    amuleClient.searchSync(cleanQuery, SearchType.GLOBAL).getOrThrow()
+                }
+                global.fold(
+                    onSuccess = { it.files },
+                    onFailure = { globalError ->
+                        log.warn(
+                            "Global eD2k search unavailable; retrying over Kad: {}",
+                            globalError.message,
+                        )
+                        amuleClient.searchSync(cleanQuery, SearchType.KAD).getOrThrow().files
+                    },
+                )
             }
             cache[key] = CachedSearch(System.nanoTime(), files)
             files
