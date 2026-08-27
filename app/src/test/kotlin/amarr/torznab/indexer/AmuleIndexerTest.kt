@@ -4,6 +4,7 @@ import amarr.MagnetLink
 import amarr.torznab.model.Feed.Channel.Item.TorznabAttribute
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
 import io.mockk.Called
 import io.mockk.every
@@ -22,10 +23,11 @@ class AmuleIndexerTest : StringSpec({
     "should advertise the TV category in capabilities" {
         val indexer = AmuleIndexer(mockClient, logger)
         val capabilities = indexer.capabilities()
-        capabilities.categories.category.size shouldBe 1
-        capabilities.categories.category[0].name shouldBe "TV"
-        capabilities.categories.category[0].id shouldBe 5000
-        capabilities.categories.category[0].subcat.single().id shouldBe 5030
+        val tv = capabilities.categories.category.single { it.id == 5000 }
+        tv.name shouldBe "TV"
+        tv.subcat.single().id shouldBe 5030
+        capabilities.categories.category.single { it.id == 2000 }.name shouldBe "Movies"
+        capabilities.searching.movieSearch.available shouldBe "yes"
     }
 
     "when empty queried should not launch a global Kad search" {
@@ -121,4 +123,75 @@ class AmuleIndexerTest : StringSpec({
         verify(exactly = 1) { mockClient.searchSync("fallback", SearchType.KAD) }
     }
 
+    "should find typical season naming styles with one broad amule search" {
+        val files = listOf(
+            searchFile("Muertos SL S01E02.mkv", 1),
+            searchFile("Muertos.SL.1x06.1080p.mkv", 2),
+            searchFile("Muertos SL T01E08 Castellano.mkv", 3),
+            searchFile("Muertos SL Capitulo 103.mkv", 4),
+            searchFile("Muertos SL Temporada Primera.mkv", 5),
+            searchFile("Muertos SL S02E01.mkv", 6),
+            searchFile("Unrelated movie.mkv", 7),
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(files))
+
+        val result = AmuleIndexer(mockClient, logger).searchTv("Muertos SL", 1, null, 0, 100, emptyList())
+
+        verify(exactly = 1) { mockClient.searchSync("Muertos SL", SearchType.GLOBAL) }
+        result.channel.item.map { it.title }.shouldContainExactlyInAnyOrder(
+            "Muertos SL S01E02.mkv",
+            "Muertos.SL.1x06.1080p.mkv",
+            "Muertos SL T01E08 Castellano.mkv",
+            "Muertos SL Capitulo 103.mkv",
+            "Muertos SL Temporada Primera.mkv",
+        )
+    }
+
+    "should select an exact episode across alternate naming styles" {
+        val files = listOf(
+            searchFile("Death Inc S01E03.mkv", 1),
+            searchFile("Muertos SL 1x03 Castellano.mkv", 2),
+            searchFile("Muertos SL T01E03 1080p.mkv", 3),
+            searchFile("Muertos SL Capitulo 103.mkv", 4),
+            searchFile("Muertos SL S01E04.mkv", 5),
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(files))
+
+        val result = AmuleIndexer(mockClient, logger).searchTv("Muertos SL", 1, 3, 0, 100, emptyList())
+
+        result.channel.item.map { it.title }.shouldContainExactlyInAnyOrder(
+            "Death Inc S01E03.mkv",
+            "Muertos SL 1x03 Castellano.mkv",
+            "Muertos SL T01E03 1080p.mkv",
+            "Muertos SL Capitulo 103.mkv",
+        )
+    }
+
+    "should preserve broad results when filenames have no recognizable season marker" {
+        val file = searchFile("Show complete collection.mkv", 1)
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(file)))
+
+        val result = AmuleIndexer(mockClient, logger).searchTv("Show", 1, null, 0, 100, emptyList())
+
+        result.channel.item.single().title shouldBe file.fileName
+    }
+
+    "should return a movie category requested by Radarr" {
+        val file = searchFile("Movie 2026.mkv", 1)
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(file)))
+
+        val result = AmuleIndexer(mockClient, logger).search("Movie 2026", 0, 100, listOf(2000))
+
+        result.channel.item.single().attributes shouldContain TorznabAttribute("category", "2000")
+    }
+
 })
+
+private fun searchFile(name: String, id: Int) = SearchFile(
+    fileName = name,
+    hash = ByteArray(16) { index -> (index + id).toByte() },
+    sizeFull = 1_000_000_000,
+    completeSourceCount = 1,
+    sourceCount = 2,
+    downloadStatus = SearchResultsResponse.SearchFileDownloadStatus.NEW,
+)

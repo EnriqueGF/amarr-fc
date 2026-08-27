@@ -5,8 +5,8 @@ Production-oriented aMule connector for Sonarr, based on
 
 It exposes:
 
-- a Torznab TV indexer backed by Kad/eD2k searches;
-- the subset of the qBittorrent Web API used by Sonarr;
+- a Torznab TV/movie indexer backed by Kad/eD2k searches;
+- the subset of the qBittorrent Web API used by Sonarr and Radarr;
 - liveness and readiness health checks;
 - persistent download/category ownership in SQLite.
 
@@ -36,6 +36,12 @@ Category: sonarr
 ```
 
 Sonarr must mount the completed directory at `/data/amule/complete`.
+
+## Radarr
+
+Use the same Torznab URL and API key, select the Movies categories, and add a
+second qBittorrent download client pointing to `amarr-fc:8080` with category
+`radarr`. Radarr must mount the completed directory at `/data/amule/complete`.
 
 ## Development
 

@@ -48,7 +48,7 @@ data class Caps(
         @Serializable
         @SerialName("movie-search")
         data class MovieSearch(
-            val available: String = "no",
+            val available: String = "yes",
             val supportedParams: String = "q",
             val searchEngine: String = "raw",
         )
@@ -74,6 +74,11 @@ data class Caps(
     @SerialName("categories")
     class Categories(
         val category: List<Category> = listOf(
+            Category(
+                id = 2000,
+                name = "Movies",
+                subcat = listOf(Category(id = 2040, name = "Movies/HD")),
+            ),
             Category(
                 id = 5000,
                 name = "TV",

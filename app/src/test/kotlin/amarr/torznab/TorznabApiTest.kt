@@ -74,9 +74,9 @@ class TorznabApiTest : StringSpec({
             application {
                 torznabApi(amuleIndexer, ddunlimitednetIndexer)
             }
-            coEvery { amuleIndexer.search("show", 0, 100, listOf()) } returns emptyFeed()
+            coEvery { amuleIndexer.searchTv("show", null, null, 0, 100, listOf()) } returns emptyFeed()
             client.get("/api?t=tvsearch&q=show&offset=0&limit=100")
-            coVerify { amuleIndexer.search("show", 0, 100, listOf()) }
+            coVerify { amuleIndexer.searchTv("show", null, null, 0, 100, listOf()) }
         }
     }
 
@@ -91,14 +91,25 @@ class TorznabApiTest : StringSpec({
         }
     }
 
-    "should issue one precise tv query using Sonarr's ep parameter" {
+    "should preserve Sonarr season and episode semantics for the amule indexer" {
         testApplication {
             application {
                 torznabApi(amuleIndexer, ddunlimitednetIndexer)
             }
-            coEvery { amuleIndexer.search(any(), 0, 100, listOf()) } returns emptyFeed()
+            coEvery { amuleIndexer.searchTv(any(), any(), any(), 0, 100, listOf()) } returns emptyFeed()
             client.get("/api?t=tvsearch&q=show&season=1&ep=2&offset=0&limit=100")
-            coVerify { amuleIndexer.search("show S01E02", 0, 100, listOf()) }
+            coVerify { amuleIndexer.searchTv("show", 1, 2, 0, 100, listOf()) }
+        }
+    }
+
+    "should preserve a season search without inventing an episode" {
+        testApplication {
+            application {
+                torznabApi(amuleIndexer, ddunlimitednetIndexer)
+            }
+            coEvery { amuleIndexer.searchTv(any(), any(), any(), 0, 100, listOf(5030)) } returns emptyFeed()
+            client.get("/api?t=tvsearch&q=show&season=1&cat=5030&offset=0&limit=100")
+            coVerify { amuleIndexer.searchTv("show", 1, null, 0, 100, listOf(5030)) }
         }
     }
 

@@ -71,11 +71,18 @@ private suspend fun ApplicationCall.performSearch(indexer: Indexer, xmlFormat: X
     val offset = request.queryParameters["offset"]?.toIntOrNull() ?: 0
     val limit = request.queryParameters["limit"]?.toIntOrNull() ?: 100
     val cat = request.queryParameters["cat"]?.split(",")?.map { cat -> cat.toInt() } ?: emptyList()
-    val queries = searchQueries(query, mode)
-    application.log.debug("Handling search request: {}, {}, {}, {}", queries, offset, limit, cat)
+    val season = request.queryParameters["season"]?.toIntOrNull()
+    val episode = (request.queryParameters["ep"] ?: request.queryParameters["episode"])?.toIntOrNull()
+    val effectiveQuery = if (query.isBlank()) EMPTY_QUERY_PROBE else query
+    application.log.debug("Handling search request: {}, {}, {}, {}", effectiveQuery, offset, limit, cat)
     try {
+        val feed = if (mode == SearchMode.Tv && query.isNotBlank()) {
+            indexer.searchTv(effectiveQuery, season, episode, offset, limit, cat)
+        } else {
+            indexer.search(effectiveQuery, offset, limit, cat)
+        }
         respondText(
-            xmlFormat.encodeToString(performQueries(indexer, queries, offset, limit, cat)),
+            xmlFormat.encodeToString(feed),
             contentType = ContentType.Application.Xml
         )
     } catch (e: ThrottledException) {
@@ -85,54 +92,6 @@ private suspend fun ApplicationCall.performSearch(indexer: Indexer, xmlFormat: X
         application.log.warn("Unauthorized, returning 401")
         respondText("Unauthorized, check your credentials.", status = HttpStatusCode.Unauthorized)
     }
-}
-
-private suspend fun ApplicationCall.performQueries(
-    indexer: Indexer,
-    queries: List<String>,
-    offset: Int,
-    limit: Int,
-    cat: List<Int>
-): Feed {
-    if (queries.size == 1) {
-        return indexer.search(queries.single(), offset, limit, cat)
-    }
-
-    val rawLimit = offset + limit
-    val items = queries
-        .flatMap { query -> indexer.search(query, 0, rawLimit, cat).channel.item }
-        .distinctBy { item -> item.enclosure.url }
-    return Feed(
-        channel = Feed.Channel(
-            response = Feed.Channel.Response(
-                offset = offset,
-                total = items.size
-            ),
-            item = items.drop(offset).take(limit)
-        )
-    )
-}
-
-private fun ApplicationCall.searchQueries(query: String, mode: SearchMode): List<String> {
-    // Torznab clients probe an indexer with an empty query before saving it.
-    // aMule cannot perform an empty search, so use a stable TV-shaped probe
-    // that returns genuine network results without adding a download.
-    if (query.isBlank()) {
-        return listOf(EMPTY_QUERY_PROBE)
-    }
-    if (mode != SearchMode.Tv) {
-        return listOf(query)
-    }
-    val season = request.queryParameters["season"]?.toIntOrNull() ?: return listOf(query)
-    val episode = (
-        request.queryParameters["ep"] ?: request.queryParameters["episode"]
-    )?.toIntOrNull() ?: return listOf(query)
-    val paddedSeason = season.toString().padStart(2, '0')
-    val paddedEpisode = episode.toString().padStart(2, '0')
-    // aMule has a single global search slot. One precise query avoids three
-    // sequential Kad searches and still lets the indexer rank alternate
-    // naming styles returned by the network.
-    return listOf("$query S${paddedSeason}E$paddedEpisode")
 }
 
 private enum class SearchMode {

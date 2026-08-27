@@ -22,7 +22,7 @@ data class Feed(val version: String = "2.0", val channel: Channel) {
         @XmlElement
         val title: String = "amarr-fc",
         @XmlElement
-        val description: String = "aMule eD2k indexer for Sonarr",
+        val description: String = "aMule eD2k indexer for Sonarr and Radarr",
         val response: Response,
         val item: List<Item>
     ) {
