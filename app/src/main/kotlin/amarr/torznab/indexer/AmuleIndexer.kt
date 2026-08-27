@@ -260,7 +260,8 @@ class AmuleIndexer(
         val episodes = selectedByEpisode.keys.sorted()
         if (episodes.size < 2 || episodes != (1..episodes.last()).toList()) return null
         val selected = episodes.map { selectedByEpisode.getValue(it) }
-        val packName = "$query S${season.toString().padStart(2, '0')} PACK aMule"
+        val resolution = dominantResolution(selected)
+        val packName = "$query S${season.toString().padStart(2, '0')} PACK HDTV-${resolution}p aMule"
         val pack = MagnetLink.forAmarrPack(
             packName,
             selected.map { MagnetLink.forAmarr(it.hash, it.fileName, it.sizeFull) },
@@ -290,6 +291,22 @@ class AmuleIndexer(
         return patterns.firstNotNullOfOrNull { pattern ->
             pattern.find(name)?.groupValues?.get(1)?.toIntOrNull()
         }?.takeIf { it in 1..999 }
+    }
+
+    private fun dominantResolution(files: List<SearchFile>): Int {
+        val resolutions = files.mapNotNull { file ->
+            Regex("(?<![0-9])(2160|1080|720|576|480)p?(?![0-9])", RegexOption.IGNORE_CASE)
+                .find(file.fileName)
+                ?.groupValues
+                ?.get(1)
+                ?.toIntOrNull()
+        }
+        return resolutions
+            .groupingBy { it }
+            .eachCount()
+            .maxWithOrNull(compareBy<Map.Entry<Int, Int>> { it.value }.thenBy { it.key })
+            ?.key
+            ?: 1080
     }
 
     private fun resultAttributes(category: String, seeders: Int, peers: Int, size: Long) = listOf(

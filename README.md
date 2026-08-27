@@ -39,7 +39,7 @@ Category: sonarr
 
 Sonarr must see the completed directory at `/data/amuleCompleted`.
 
-Season searches can return an `Sxx PACK aMule` result when at least two
+Season searches can return an `Sxx PACK` result when at least two
 contiguous episodes beginning at episode 1 are available. Grabbing it queues
 the real episode files in aMule and exposes them to Sonarr as one completed
 season directory.

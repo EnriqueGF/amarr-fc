@@ -200,7 +200,7 @@ class AmuleIndexerTest : StringSpec({
         val packItem = result.channel.item.first()
         val pack = MagnetLink.fromString(packItem.enclosure.url)
 
-        packItem.title shouldBe "Dragon Ball Super S01 PACK aMule"
+        packItem.title shouldBe "Dragon Ball Super S01 PACK HDTV-1080p aMule"
         pack.isPack() shouldBe true
         pack.packMembers().map { it.name }.toSet() shouldBe setOf(
             "Dragon Ball Super S01E01 1080p.mkv",
@@ -221,7 +221,7 @@ class AmuleIndexerTest : StringSpec({
         val result = AmuleIndexer(mockClient, logger).searchTv("Muertos SL", 1, null, 0, 100, emptyList())
 
         result.channel.item.map { it.title } shouldBe listOf(
-            "Muertos SL S01 PACK aMule",
+            "Muertos SL S01 PACK HDTV-1080p aMule",
             "Muertos SL 1x01.mkv",
             "Muertos SL 1x02.mkv",
         )
