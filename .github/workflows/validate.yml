@@ -16,3 +16,5 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
       - name: Run the Gradle test task
         run: ./gradlew test
+      - name: Build production image
+        run: docker build -t amarr-fc:test .

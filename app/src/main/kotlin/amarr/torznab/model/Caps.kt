@@ -14,7 +14,7 @@ data class Caps(
 
     @Serializable
     @SerialName("server")
-    data class Server(val version: String = "1.0", val title: String = "Amarr")
+    data class Server(val version: String = "1.0", val title: String = "amarr-fc")
 
     @Serializable
     @SerialName("limits")
@@ -75,9 +75,10 @@ data class Caps(
     class Categories(
         val category: List<Category> = listOf(
             Category(
-                id = 1,
-                name = "All",
-            )
+                id = 5000,
+                name = "TV",
+                subcat = listOf(Category(id = 5030, name = "TV/SD")),
+            ),
         )
     ) {
         @Serializable
@@ -85,6 +86,7 @@ data class Caps(
         data class Category(
             val id: Int,
             val name: String,
+            val subcat: List<Category> = emptyList(),
         )
     }
 

@@ -27,7 +27,11 @@ class TorrentService(
 
         val allFiles = (sharedFiles // Downloading files also appear in shared files
             .filterNot { downloadingFilesHashSet.contains(it.fileHashHexString) } + downloadingFiles)
-            .filter { category == null || categoryStore.getCategory(it.fileHashHexString!!) == category }
+            .filter { file ->
+                val hash = file.fileHashHexString ?: return@filter false
+                val storedCategory = categoryStore.getCategory(hash) ?: return@filter false
+                category == null || storedCategory == category
+            }
 
         return allFiles
             .map { dl ->
@@ -54,7 +58,7 @@ class TorrentService(
 
                             else -> TorrentState.unknown
                         },
-                        category = category,
+                        category = categoryStore.getCategory(dl.fileHashHexString!!),
                         dlspeed = dl.speed!!,
                         num_seeds = dl.sourceXferCount.toInt(),
                         eta = computeEta(dl.speed!!, dl.sizeFull!!, dl.sizeDone!!),
@@ -72,7 +76,7 @@ class TorrentService(
                         progress = 1.0,
                         priority = 0,
                         state = TorrentState.uploading,
-                        category = category,
+                        category = categoryStore.getCategory(dl.fileHashHexString!!),
                         eta = 0,
                         num_seeds = 0, // Irrelevant
                     )
@@ -104,7 +108,7 @@ class TorrentService(
             if (!magnetLink.isAmarr()) {
                 throw nonAmarrLink(url)
             }
-            amuleClient.downloadEd2kLink(magnetLink.toEd2kLink())
+            amuleClient.downloadEd2kLink(magnetLink.toEd2kLink()).getOrThrow()
             if (category != null) {
                 categoryStore.store(category, magnetLink.amuleHexHash())
             }
@@ -118,7 +122,7 @@ class TorrentService(
             .getOrThrow()
         hashes.forEach { hash ->
             if (downloadingFiles.any { it.fileHashHexString == hash }) {
-                amuleClient.sendDownloadCommand(hash.hexToByteArray(), DownloadCommand.DELETE)
+                amuleClient.sendDownloadCommand(hash.hexToByteArray(), DownloadCommand.DELETE).getOrThrow()
             } else if (deleteFiles == "true") {
                 deleteSharedFileByHash(hash)
             } else {
@@ -129,9 +133,15 @@ class TorrentService(
     }
 
     @OptIn(ExperimentalStdlibApi::class)
-    fun deleteAllTorrents(deleteFiles: String?) = amuleClient.getSharedFiles().getOrThrow().forEach { file ->
-        amuleClient.sendDownloadCommand(file.fileHashHexString!!.hexToByteArray(), DownloadCommand.DELETE)
-        categoryStore.delete(file.fileHashHexString!!)
+    fun deleteAllTorrents(deleteFiles: String?) {
+        val trackedHashes = (
+            amuleClient.getDownloadQueue().getOrThrow() +
+                amuleClient.getSharedFiles().getOrThrow()
+            )
+            .mapNotNull { it.fileHashHexString }
+            .filter { categoryStore.getCategory(it) != null }
+            .distinct()
+        deleteTorrent(trackedHashes, deleteFiles)
     }
 
     fun getFile(hash: String) = getTorrentInfo(null)

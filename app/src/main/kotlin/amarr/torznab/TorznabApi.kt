@@ -1,5 +1,6 @@
 package amarr.torznab
 
+import amarr.security.secureEquals
 import amarr.torznab.indexer.AmuleIndexer
 import amarr.torznab.indexer.Indexer
 import amarr.torznab.indexer.ThrottledException
@@ -16,22 +17,30 @@ import nl.adaptivity.xmlutil.core.XmlVersion
 import nl.adaptivity.xmlutil.serialization.XML
 
 
-fun Application.torznabApi(amuleIndexer: AmuleIndexer, ddunlimitednetIndexer: DdunlimitednetIndexer) {
+fun Application.torznabApi(
+    amuleIndexer: AmuleIndexer,
+    ddunlimitednetIndexer: DdunlimitednetIndexer,
+    apiKey: String? = null,
+) {
     routing {
         // Kept for legacy reasons
         get("/api") {
-            call.handleRequests(amuleIndexer)
+            call.handleRequests(amuleIndexer, apiKey)
         }
         get("/indexer/amule/api") {
-            call.handleRequests(amuleIndexer)
+            call.handleRequests(amuleIndexer, apiKey)
         }
         get("indexer/ddunlimitednet/api") {
-            call.handleRequests(ddunlimitednetIndexer)
+            call.handleRequests(ddunlimitednetIndexer, apiKey)
         }
     }
 }
 
-private suspend fun ApplicationCall.handleRequests(indexer: Indexer) {
+private suspend fun ApplicationCall.handleRequests(indexer: Indexer, apiKey: String?) {
+    if (apiKey != null && !secureEquals(apiKey, request.queryParameters["apikey"])) {
+        respondText("Unauthorized", status = HttpStatusCode.Unauthorized)
+        return
+    }
     application.log.debug("Handling torznab request")
     val xmlFormat = XML {
         xmlDeclMode = XmlDeclMode.Charset
@@ -109,14 +118,15 @@ private fun ApplicationCall.searchQueries(query: String, mode: SearchMode): List
         return listOf(query)
     }
     val season = request.queryParameters["season"]?.toIntOrNull() ?: return listOf(query)
-    val episode = request.queryParameters["episode"]?.toIntOrNull() ?: return listOf(query)
+    val episode = (
+        request.queryParameters["ep"] ?: request.queryParameters["episode"]
+    )?.toIntOrNull() ?: return listOf(query)
     val paddedSeason = season.toString().padStart(2, '0')
     val paddedEpisode = episode.toString().padStart(2, '0')
-    return listOf(
-        "$query S${paddedSeason}E$paddedEpisode",
-        "$query ${season}x$paddedEpisode",
-        "$query ${season}$paddedEpisode"
-    )
+    // aMule has a single global search slot. One precise query avoids three
+    // sequential Kad searches and still lets the indexer rank alternate
+    // naming styles returned by the network.
+    return listOf("$query S${paddedSeason}E$paddedEpisode")
 }
 
 private enum class SearchMode {

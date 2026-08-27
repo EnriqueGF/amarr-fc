@@ -18,29 +18,21 @@ class AmuleIndexerTest : StringSpec({
     val mockClient = mockk<AmuleClient>()
     val logger = LoggerFactory.getLogger(AmuleIndexerTest::class.java)
 
-    "should return single category in capabilities" {
+    "should advertise the TV category in capabilities" {
         val indexer = AmuleIndexer(mockClient, logger)
         val capabilities = indexer.capabilities()
         capabilities.categories.category.size shouldBe 1
-        capabilities.categories.category[0].name shouldBe "All"
-        capabilities.categories.category[0].id shouldBe 1
+        capabilities.categories.category[0].name shouldBe "TV"
+        capabilities.categories.category[0].id shouldBe 5000
+        capabilities.categories.category[0].subcat.single().id shouldBe 5030
     }
 
-    "when empty queried should return only one result within that category" {
+    "when empty queried should not launch a global Kad search" {
         val indexer = AmuleIndexer(mockClient, logger)
         val results = indexer.search("", 0, 1000, listOf())
-        results.channel.response.total shouldBe 1
+        results.channel.response.total shouldBe 0
         results.channel.response.offset shouldBe 0
-        results.channel.item.size shouldBe 1
-        val item = results.channel.item[0]
-        item.title shouldBe "No query provided"
-        item.enclosure.url shouldBe "http://mock.url"
-        item.enclosure.length shouldBe 0
-        item.attributes.size shouldBe 2
-        item.attributes[0].name shouldBe "category"
-        item.attributes[0].value shouldBe "1"
-        item.attributes[1].name shouldBe "size"
-        item.attributes[1].value shouldBe "0"
+        results.channel.item.size shouldBe 0
         verify { mockClient wasNot Called }
     }
 
@@ -65,7 +57,7 @@ class AmuleIndexerTest : StringSpec({
         item.enclosure.url shouldBe MagnetLink.forAmarr(searchFile.hash, "test.mkv", searchFile.sizeFull).toString()
         item.enclosure.length shouldBe 1000
         item.attributes.size shouldBe 4
-        item.attributes shouldContain TorznabAttribute("category", "1")
+        item.attributes shouldContain TorznabAttribute("category", "5030")
         item.attributes shouldContain TorznabAttribute("size", "1000")
         item.attributes shouldContain TorznabAttribute("seeders", "1")
         item.attributes shouldContain TorznabAttribute("peers", "2")
@@ -101,6 +93,16 @@ class AmuleIndexerTest : StringSpec({
         indexer.search("C'est un complot", 0, 1000, listOf())
 
         verify { mockClient.searchSync("C est un complot") }
+    }
+
+    "should cache identical searches to protect the aMule global search slot" {
+        every { mockClient.searchSync(any()) } returns Result.success(SearchResultsResponse(emptyList()))
+        val indexer = AmuleIndexer(mockClient, logger, cacheSeconds = 60)
+
+        indexer.search("The Show S01E02", 0, 100, emptyList())
+        indexer.search("The Show S01E02", 0, 100, emptyList())
+
+        verify(exactly = 1) { mockClient.searchSync("The Show S01E02") }
     }
 
 })

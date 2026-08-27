@@ -80,16 +80,23 @@ class TorznabApiTest : StringSpec({
         }
     }
 
-    "should expand tv search into common episode naming formats" {
+    "should issue one precise tv query using Sonarr's ep parameter" {
         testApplication {
             application {
                 torznabApi(amuleIndexer, ddunlimitednetIndexer)
             }
             coEvery { amuleIndexer.search(any(), 0, 100, listOf()) } returns emptyFeed()
-            client.get("/api?t=tvsearch&q=show&season=1&episode=2&offset=0&limit=100")
+            client.get("/api?t=tvsearch&q=show&season=1&ep=2&offset=0&limit=100")
             coVerify { amuleIndexer.search("show S01E02", 0, 100, listOf()) }
-            coVerify { amuleIndexer.search("show 1x02", 0, 100, listOf()) }
-            coVerify { amuleIndexer.search("show 102", 0, 100, listOf()) }
+        }
+    }
+
+    "should reject a missing Torznab API key" {
+        testApplication {
+            application {
+                torznabApi(amuleIndexer, ddunlimitednetIndexer, "private-key")
+            }
+            client.get("/indexer/amule/api?t=caps").status shouldBe HttpStatusCode.Unauthorized
         }
     }
 })

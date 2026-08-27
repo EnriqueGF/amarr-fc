@@ -3,7 +3,7 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
-rootProject.name = "amarr"
+rootProject.name = "amarr-fc"
 
 include("app")
 
@@ -39,6 +39,7 @@ dependencyResolutionManagement {
             library("logback", "ch.qos.logback", "logback-classic").version("1.5.32")
             library("kotlin-test-junit", "org.jetbrains.kotlin", "kotlin-test-junit").versionRef("kotlin")
             library("commons-text", "org.apache.commons", "commons-text").version("1.15.0")
+            library("sqlite-jdbc", "org.xerial", "sqlite-jdbc").version("3.53.4.0")
 
             // Plugins
             plugin("kotlin-jvm", "org.jetbrains.kotlin.jvm").versionRef("kotlin")

@@ -2,6 +2,7 @@ package amarr.torrent
 
 import amarr.MagnetLink
 import amarr.category.CategoryStore
+import amarr.security.QbitAuth
 import amarr.torrent.model.Category
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.shouldBe
@@ -74,6 +75,37 @@ class TorrentApiTest : StringSpec({
             }, url = "/api/v2/auth/login").apply {
                 this.status shouldBe HttpStatusCode.OK
             }
+        }
+    }
+
+    "should require a valid qBittorrent session when authentication is enabled" {
+        testApplication {
+            val auth = QbitAuth("sonarr", "private-password")
+            application {
+                torrentApi(amuleClient, categoryStore, finishedPath, auth)
+                configureForTest()
+            }
+
+            client.get("/api/v2/app/preferences").status shouldBe HttpStatusCode.Forbidden
+            client.submitForm(
+                formParameters = Parameters.build {
+                    append("username", "sonarr")
+                    append("password", "wrong")
+                },
+                url = "/api/v2/auth/login",
+            ).status shouldBe HttpStatusCode.Forbidden
+
+            val login = client.submitForm(
+                formParameters = Parameters.build {
+                    append("username", "sonarr")
+                    append("password", "private-password")
+                },
+                url = "/api/v2/auth/login",
+            )
+            login.status shouldBe HttpStatusCode.OK
+            client.get("/api/v2/app/preferences") {
+                header(HttpHeaders.Cookie, "SID=${auth.sessionId}")
+            }.status shouldBe HttpStatusCode.OK
         }
     }
 
@@ -195,6 +227,7 @@ class TorrentApiTest : StringSpec({
                 torrentApi(amuleClient, categoryStore, finishedPath)
                 configureForTest()
             }
+            categoryStore.store("test", testMagnetLink.amuleHexHash())
             amuleClient.addToDownloadQueue(testMagnetLink)
             every { amuleClient.getSharedFiles() } returns Result.success(emptyList())
             client.get {
@@ -212,6 +245,7 @@ class TorrentApiTest : StringSpec({
                 torrentApi(amuleClient, categoryStore, finishedPath)
                 configureForTest()
             }
+            categoryStore.store("test", testMagnetLink.amuleHexHash())
             amuleClient.addToDownloadQueue(testMagnetLink)
             every { amuleClient.getSharedFiles() } returns Result.success(emptyList())
             client.get {
@@ -231,6 +265,7 @@ class TorrentApiTest : StringSpec({
                 torrentApi(amuleClient, categoryStore, finishedPath)
                 configureForTest()
             }
+            categoryStore.store("test", testMagnetLink.amuleHexHash())
             amuleClient.addToDownloadQueue(testMagnetLink)
             every { amuleClient.getSharedFiles() } returns Result.success(emptyList())
             client.get {

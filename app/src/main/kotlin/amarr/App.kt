@@ -1,7 +1,8 @@
 package amarr
 
-import amarr.amule.debugApi
-import amarr.category.FileCategoryStore
+import amarr.category.SqliteCategoryStore
+import amarr.health.healthApi
+import amarr.security.QbitAuth
 import amarr.torrent.torrentApi
 import amarr.torznab.indexer.AmuleIndexer
 import amarr.torznab.indexer.ddunlimitednet.DdunlimitednetClient
@@ -21,18 +22,19 @@ import org.slf4j.Logger
 import org.slf4j.event.Level
 
 fun main() {
+    val config = AppConfig.fromEnvironment()
     embeddedServer(
-        Netty, port = amarrPort()
+        Netty, port = config.port
     ) {
-        app()
+        app(config)
     }.start(wait = true)
 }
 
 @VisibleForTesting
-internal fun Application.app() {
+internal fun Application.app(config: AppConfig = AppConfig.fromEnvironment()) {
     setLogLevel(log, optionalEnv("AMARR_LOG_LEVEL", "INFO"))
-    val amuleClient = buildClient(log)
-    val amuleIndexer = AmuleIndexer(amuleClient, log)
+    val amuleClient = buildClient(log, config)
+    val amuleIndexer = AmuleIndexer(amuleClient, log, config.searchCacheSeconds)
     val ddunlimitednetClient = DdunlimitednetClient(
         CIO.create(),
         System.getenv("DDUNLIMITEDNET_USERNAME"),
@@ -40,7 +42,7 @@ internal fun Application.app() {
         log
     )
     val ddunlimitednetIndexer = DdunlimitednetIndexer(ddunlimitednetClient, log)
-    val categoryStore = FileCategoryStore(optionalEnv("AMARR_CONFIG_PATH", "/config"))
+    val categoryStore = SqliteCategoryStore(config.configPath)
 
     install(CallLogging) {
         level = Level.DEBUG
@@ -53,9 +55,14 @@ internal fun Application.app() {
             encodeDefaults = true
         })
     }
-    debugApi(amuleClient)
-    torznabApi(amuleIndexer, ddunlimitednetIndexer)
-    torrentApi(amuleClient, categoryStore, optionalEnv("AMULE_FINISHED_PATH", "/finished"))
+    torznabApi(amuleIndexer, ddunlimitednetIndexer, config.apiKey)
+    torrentApi(
+        amuleClient,
+        categoryStore,
+        config.finishedPath,
+        QbitAuth(config.qbitUsername, config.qbitPassword),
+    )
+    healthApi(amuleClient, config.configPath)
 }
 
 @VisibleForTesting
@@ -79,15 +86,13 @@ private fun setLogLevel(logger: Logger, logLevel: String) {
     }
 }
 
-fun buildClient(logger: Logger): AmuleClient =
+fun buildClient(logger: Logger, config: AppConfig): AmuleClient =
     AmuleClient(
-        requiredEnv("AMULE_HOST"),
-        requiredEnv("AMULE_PORT").toInt(),
-        requiredEnv("AMULE_PASSWORD"),
+        config.amuleHost,
+        config.amulePort,
+        config.amulePassword,
         logger = logger
     )
-
-private fun requiredEnv(name: String): String = System.getenv(name) ?: throw Exception("$name is not set")
 
 private fun optionalEnv(name: String, default: String): String = optionalEnv(System.getenv(), name, default)
 

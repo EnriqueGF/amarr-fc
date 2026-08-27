@@ -19,6 +19,7 @@ dependencies {
     implementation(libs.guava)
     implementation(libs.logback)
     implementation(libs.commons.text)
+    implementation(libs.sqlite.jdbc)
 
     testImplementation(libs.bundles.kotest)
     testImplementation(libs.mockk)
@@ -56,7 +57,7 @@ jib {
         }
     }
     to {
-        image = "vexdev/amarr"
+        image = "ghcr.io/enriquegf/amarr-fc"
         tags = setOf(version.toString())
         auth {
             username = System.getenv("DOCKER_USERNAME")

@@ -6,6 +6,9 @@ import nl.adaptivity.xmlutil.ExperimentalXmlUtilApi
 import nl.adaptivity.xmlutil.serialization.XmlElement
 import nl.adaptivity.xmlutil.serialization.XmlNamespaceDeclSpec
 import nl.adaptivity.xmlutil.serialization.XmlSerialName
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalXmlUtilApi::class)
 @Serializable
@@ -17,9 +20,9 @@ data class Feed(val version: String = "2.0", val channel: Channel) {
     @SerialName("channel")
     data class Channel(
         @XmlElement
-        val title: String = "Amarr",
+        val title: String = "amarr-fc",
         @XmlElement
-        val description: String = "Amarr 1.0",
+        val description: String = "aMule eD2k indexer for Sonarr",
         val response: Response,
         val item: List<Item>
     ) {
@@ -37,7 +40,9 @@ data class Feed(val version: String = "2.0", val channel: Channel) {
             @XmlElement
             val title: String,
             @XmlElement
-            val pubDate: String = "Sat, 14 Mar 2015 12:42:19 -0400",
+            val pubDate: String = DateTimeFormatter.RFC_1123_DATE_TIME.format(
+                ZonedDateTime.now(ZoneOffset.UTC)
+            ),
             val enclosure: Enclosure,
             val attributes: List<TorznabAttribute>
         ) {

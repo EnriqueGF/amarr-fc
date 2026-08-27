@@ -8,8 +8,22 @@ import io.ktor.util.logging.*
 import jamule.AmuleClient
 import jamule.response.SearchResultsResponse.SearchFile
 import java.text.Normalizer
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
-class AmuleIndexer(private val amuleClient: AmuleClient, private val log: Logger) : Indexer {
+class AmuleIndexer(
+    private val amuleClient: AmuleClient,
+    private val log: Logger,
+    cacheSeconds: Long = 900,
+) : Indexer {
+    private data class CachedSearch(val createdAtNanos: Long, val files: List<SearchFile>)
+
+    private val searchMutex = Mutex()
+    private val cacheTtlNanos = cacheSeconds * 1_000_000_000L
+    private val cache = ConcurrentHashMap<String, CachedSearch>()
 
     override suspend fun search(query: String, offset: Int, limit: Int, cat: List<Int>): Feed {
         log.debug("Starting search for query: {}, offset: {}, limit: {}", query, offset, limit)
@@ -18,7 +32,13 @@ class AmuleIndexer(private val amuleClient: AmuleClient, private val log: Logger
             return EMPTY_QUERY_RESPONSE
         }
         val cleanQuery = normalizeSearchQuery(query)
-        return buildFeed(amuleClient.searchSync(cleanQuery).getOrThrow().files.filter(::isRelevantVideoResult), offset, limit)
+        val files = searchFiles(cleanQuery)
+            .asSequence()
+            .filter(::isRelevantVideoResult)
+            .distinctBy { file -> file.hash.joinToString("") { "%02x".format(it) } }
+            .sortedByDescending { score(it, cleanQuery) }
+            .toList()
+        return buildFeed(files, offset, limit)
     }
 
     override suspend fun capabilities(): Caps = Caps()
@@ -28,7 +48,42 @@ class AmuleIndexer(private val amuleClient: AmuleClient, private val log: Logger
         if (extension in EXCLUDED_EXTENSIONS) {
             return false
         }
-        return extension in VIDEO_EXTENSIONS || (extension.isBlank() && file.sizeFull >= MIN_VIDEO_SIZE_BYTES)
+        val looksLikeVideo = extension in VIDEO_EXTENSIONS ||
+            (extension.isBlank() && file.sizeFull >= MIN_VIDEO_SIZE_BYTES)
+        return looksLikeVideo && file.sourceCount > 0
+    }
+
+    private suspend fun searchFiles(cleanQuery: String): List<SearchFile> {
+        val key = cleanQuery.lowercase()
+        cached(key)?.let { return it }
+        return searchMutex.withLock {
+            cached(key)?.let { return@withLock it }
+            log.info("Running serialized aMule search for: {}", cleanQuery)
+            val files = withContext(Dispatchers.IO) {
+                amuleClient.searchSync(cleanQuery).getOrThrow().files
+            }
+            cache[key] = CachedSearch(System.nanoTime(), files)
+            files
+        }
+    }
+
+    private fun cached(key: String): List<SearchFile>? {
+        if (cacheTtlNanos == 0L) return null
+        val cached = cache[key] ?: return null
+        if (System.nanoTime() - cached.createdAtNanos <= cacheTtlNanos) return cached.files
+        cache.remove(key, cached)
+        return null
+    }
+
+    private fun score(file: SearchFile, query: String): Long {
+        val normalizedName = normalizeSearchQuery(file.fileName).lowercase()
+        val matchedTokens = query.lowercase().split(' ')
+            .filter { it.length >= 2 }
+            .count { normalizedName.contains(it) }
+        return matchedTokens * 1_000_000L +
+            file.completeSourceCount * 10_000L +
+            file.sourceCount * 100L +
+            minOf(file.sizeFull / (100L * 1024L * 1024L), 99L)
     }
 
     private fun normalizeSearchQuery(query: String): String =
@@ -55,7 +110,7 @@ class AmuleIndexer(private val amuleClient: AmuleClient, private val log: Logger
                             length = result.sizeFull
                         ),
                         attributes = listOf(
-                            Item.TorznabAttribute("category", "1"),
+                            Item.TorznabAttribute("category", "5030"),
                             Item.TorznabAttribute("seeders", result.completeSourceCount.toString()),
                             Item.TorznabAttribute("peers", result.sourceCount.toString()),
                             Item.TorznabAttribute("size", result.sizeFull.toString())
@@ -99,17 +154,8 @@ class AmuleIndexer(private val amuleClient: AmuleClient, private val log: Logger
 
         private val EMPTY_QUERY_RESPONSE = Feed(
             channel = Feed.Channel(
-                response = Feed.Channel.Response(offset = 0, total = 1),
-                item = listOf(
-                    Item(
-                        title = "No query provided",
-                        enclosure = Item.Enclosure("http://mock.url", 0),
-                        attributes = listOf(
-                            Item.TorznabAttribute("category", "1"),
-                            Item.TorznabAttribute("size", "0")
-                        )
-                    )
-                )
+                response = Feed.Channel.Response(offset = 0, total = 0),
+                item = emptyList(),
             )
         )
     }
