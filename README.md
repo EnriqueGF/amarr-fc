@@ -35,13 +35,13 @@ Password: AMARR_QBIT_PASSWORD
 Category: sonarr
 ```
 
-Sonarr must mount the completed directory at `/data/amule/complete`.
+Sonarr must see the completed directory at `/data/amuleCompleted`.
 
 ## Radarr
 
 Use the same Torznab URL and API key, select the Movies categories, and add a
 second qBittorrent download client pointing to `amarr-fc:8080` with category
-`radarr`. Radarr must mount the completed directory at `/data/amule/complete`.
+`radarr`. Radarr must see the completed directory at `/data/amuleCompleted`.
 
 ## Development
 

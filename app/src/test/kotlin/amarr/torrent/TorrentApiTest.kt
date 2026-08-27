@@ -259,6 +259,59 @@ class TorrentApiTest : StringSpec({
         }
     }
 
+    "should synchronize amule progress speed and sources" {
+        testApplication {
+            application {
+                torrentApi(amuleClient, categoryStore, finishedPath)
+                configureForTest()
+            }
+            categoryStore.store("radarr", testMagnetLink.amuleHexHash())
+            every { amuleClient.getDownloadQueue() } returns Result.success(
+                listOf(
+                    MockTransferringFile(
+                        fileHashHexString = testMagnetLink.amuleHexHash(),
+                        fileName = "Jumanji.mkv",
+                        sizeFull = 1_000,
+                        sizeDone = 250,
+                        speed = 50,
+                        sourceXferCount = 3,
+                        fileStatus = FileStatus.READY,
+                    )
+                )
+            )
+            every { amuleClient.getSharedFiles() } returns Result.success(emptyList())
+
+            val response = client.get("/api/v2/torrents/info?category=radarr")
+            val torrent = Json.parseToJsonElement(response.bodyAsText()).jsonArray.single().jsonObject
+
+            response.status shouldBe HttpStatusCode.OK
+            torrent["progress"]!!.jsonPrimitive.content shouldBe "0.25"
+            torrent["downloaded"]!!.jsonPrimitive.content shouldBe "250"
+            torrent["dlspeed"]!!.jsonPrimitive.content shouldBe "50"
+            torrent["num_seeds"]!!.jsonPrimitive.content shouldBe "3"
+            torrent["content_path"]!!.jsonPrimitive.content shouldBe "/finished/Jumanji.mkv"
+            torrent["download_path"]!!.jsonPrimitive.content shouldBe "/finished"
+        }
+    }
+
+    "should retry a transient amule progress read once" {
+        testApplication {
+            application {
+                torrentApi(amuleClient, categoryStore, finishedPath)
+                configureForTest()
+            }
+            every { amuleClient.getDownloadQueue() } returnsMany listOf(
+                Result.failure(IllegalStateException("Authentication failed")),
+                Result.success(emptyList()),
+            )
+            every { amuleClient.getSharedFiles() } returns Result.success(emptyList())
+
+            client.get("/api/v2/torrents/info").status shouldBe HttpStatusCode.OK
+
+            verify(exactly = 2) { amuleClient.getDownloadQueue() }
+        }
+    }
+
     "should get properties" {
         testApplication {
             application {

@@ -16,6 +16,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import jamule.AmuleClient
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
 import org.jetbrains.annotations.VisibleForTesting
 import org.slf4j.Logger
@@ -35,7 +36,8 @@ fun main() {
 internal fun Application.app(config: AppConfig = AppConfig.fromEnvironment()) {
     setLogLevel(log, optionalEnv("AMARR_LOG_LEVEL", "INFO"))
     val amuleClient = buildClient(config)
-    val amuleIndexer = AmuleIndexer(amuleClient, log, config.searchCacheSeconds)
+    val amuleMutex = Mutex()
+    val amuleIndexer = AmuleIndexer(amuleClient, log, config.searchCacheSeconds, amuleMutex)
     val ddunlimitednetClient = DdunlimitednetClient(
         CIO.create(),
         System.getenv("DDUNLIMITEDNET_USERNAME"),
@@ -62,8 +64,9 @@ internal fun Application.app(config: AppConfig = AppConfig.fromEnvironment()) {
         categoryStore,
         config.finishedPath,
         QbitAuth(config.qbitUsername, config.qbitPassword),
+        amuleMutex,
     )
-    healthApi(amuleClient, config.configPath)
+    healthApi(amuleClient, config.configPath, amuleMutex)
 }
 
 @VisibleForTesting

@@ -19,11 +19,11 @@ class AmuleIndexer(
     private val amuleClient: AmuleClient,
     private val log: Logger,
     cacheSeconds: Long = 900,
+    private val amuleMutex: Mutex = Mutex(),
 ) : Indexer {
     private data class CachedSearch(val createdAtNanos: Long, val files: List<SearchFile>)
     private data class TvCriteria(val season: Int, val episode: Int?)
 
-    private val searchMutex = Mutex()
     private val cacheTtlNanos = cacheSeconds * 1_000_000_000L
     private val cache = ConcurrentHashMap<String, CachedSearch>()
 
@@ -72,9 +72,9 @@ class AmuleIndexer(
             titleRelevantFiles.filter { tvMatchStrength(it.fileName, criteria) > 0 }
         }.orEmpty()
         // Kad searches are deliberately broad so one network request covers S01E02,
-        // 1x02, T01E02 and season packs. If any semantic matches exist, keep only
-        // those; otherwise preserve the broad results as a compatibility fallback.
-        val files = if (semanticMatches.isNotEmpty()) semanticMatches else titleRelevantFiles
+        // 1x02, T01E02 and season packs. TV searches must only expose semantic
+        // matches: returning another season is worse than returning no result.
+        val files = if (tvCriteria != null) semanticMatches else titleRelevantFiles
         return buildFeed(files, offset, limit, resultCategory(cat))
     }
 
@@ -93,7 +93,7 @@ class AmuleIndexer(
     private suspend fun searchFiles(cleanQuery: String): List<SearchFile> {
         val key = cleanQuery.lowercase()
         cached(key)?.let { return it }
-        return searchMutex.withLock {
+        return amuleMutex.withLock {
             cached(key)?.let { return@withLock it }
             log.info("Running serialized aMule search for: {}", cleanQuery)
             val files = withContext(Dispatchers.IO) {

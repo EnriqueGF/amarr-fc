@@ -30,7 +30,7 @@ data class AppConfig(
             return AppConfig(
                 port = port,
                 configPath = optional(env, "AMARR_CONFIG_PATH", "/config"),
-                finishedPath = optional(env, "AMULE_FINISHED_PATH", "/data/amule/complete"),
+                finishedPath = optional(env, "AMULE_FINISHED_PATH", "/data/amuleCompleted"),
                 amuleHost = required(env, "AMULE_HOST"),
                 amulePort = amulePort,
                 amulePassword = secret(env, "AMULE_PASSWORD"),

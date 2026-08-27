@@ -11,14 +11,16 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import jamule.AmuleClient
+import kotlinx.coroutines.sync.Mutex
 
 fun Application.torrentApi(
     amuleClient: AmuleClient,
     categoryStore: CategoryStore,
     finishedPath: String,
     auth: QbitAuth = QbitAuth.disabled(),
+    amuleMutex: Mutex = Mutex(),
 ) {
-    val service = TorrentService(amuleClient, categoryStore, finishedPath, log)
+    val service = TorrentService(amuleClient, categoryStore, finishedPath, log, amuleMutex)
     routing {
         get("/api/v2/app/webapiVersion") {
             if (!call.requireQbitAuth(auth)) return@get

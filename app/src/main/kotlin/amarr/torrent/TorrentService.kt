@@ -10,19 +10,24 @@ import jamule.model.AmuleTransferringFile
 import jamule.model.DownloadCommand
 import jamule.model.FileStatus
 import kotlin.io.path.Path
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class TorrentService(
     private val amuleClient: AmuleClient,
     private val categoryStore: CategoryStore,
     private val finishedPath: String,
-    private val log: Logger
+    private val log: Logger,
+    private val amuleMutex: Mutex = Mutex(),
 ) {
 
-    fun getTorrentInfo(category: String?): List<TorrentInfo> {
-        val downloadingFiles = amuleClient
-            .getDownloadQueue()
-            .getOrThrow()
-        val sharedFiles = amuleClient.getSharedFiles().getOrThrow()
+    suspend fun getTorrentInfo(category: String?): List<TorrentInfo> {
+        val (downloadingFiles, sharedFiles) = readAmule("refresh download progress") {
+            amuleClient.getDownloadQueue().getOrThrow() to
+                amuleClient.getSharedFiles().getOrThrow()
+        }
         val downloadingFilesHashSet = downloadingFiles.map { it.fileHashHexString }.toHashSet()
 
         val allFiles = (sharedFiles // Downloading files also appear in shared files
@@ -62,6 +67,8 @@ class TorrentService(
                         dlspeed = dl.speed!!,
                         num_seeds = dl.sourceXferCount.toInt(),
                         eta = computeEta(dl.speed!!, dl.sizeFull!!, dl.sizeDone!!),
+                        content_path = Path(finishedPath, dl.fileName!!).toString(),
+                        download_path = finishedPath,
                     )
                 else
                 // File is already fully downloaded
@@ -79,6 +86,8 @@ class TorrentService(
                         category = categoryStore.getCategory(dl.fileHashHexString!!),
                         eta = 0,
                         num_seeds = 0, // Irrelevant
+                        content_path = Path(finishedPath, dl.fileName!!).toString(),
+                        download_path = finishedPath,
                     )
             }
     }
@@ -94,7 +103,7 @@ class TorrentService(
 
     fun addCategory(category: Category) = categoryStore.addCategory(category)
 
-    fun addTorrent(urls: List<String>?, category: String?, paused: String?) {
+    suspend fun addTorrent(urls: List<String>?, category: String?, paused: String?) {
         if (urls == null) {
             log.error("No urls provided")
             throw nonAmarrLink("No urls provided")
@@ -108,7 +117,7 @@ class TorrentService(
             if (!magnetLink.isAmarr()) {
                 throw nonAmarrLink(url)
             }
-            amuleClient.downloadEd2kLink(magnetLink.toEd2kLink()).getOrThrow()
+            withAmule { amuleClient.downloadEd2kLink(magnetLink.toEd2kLink()).getOrThrow() }
             if (category != null) {
                 categoryStore.store(category, magnetLink.amuleHexHash())
             }
@@ -116,35 +125,35 @@ class TorrentService(
     }
 
     @OptIn(ExperimentalStdlibApi::class)
-    fun deleteTorrent(hashes: List<String>, deleteFiles: String?) {
-        val downloadingFiles = amuleClient
-            .getDownloadQueue()
-            .getOrThrow()
-        hashes.forEach { hash ->
-            if (downloadingFiles.any { it.fileHashHexString == hash }) {
-                amuleClient.sendDownloadCommand(hash.hexToByteArray(), DownloadCommand.DELETE).getOrThrow()
-            } else if (deleteFiles == "true") {
-                deleteSharedFileByHash(hash)
-            } else {
-                log.error("File with hash $hash not found in downloading files")
+    suspend fun deleteTorrent(hashes: List<String>, deleteFiles: String?) {
+        withAmule {
+            val downloadingFiles = amuleClient.getDownloadQueue().getOrThrow()
+            hashes.forEach { hash ->
+                if (downloadingFiles.any { it.fileHashHexString == hash }) {
+                    amuleClient.sendDownloadCommand(hash.hexToByteArray(), DownloadCommand.DELETE).getOrThrow()
+                } else if (deleteFiles == "true") {
+                    deleteSharedFileByHash(hash)
+                } else {
+                    log.error("File with hash $hash not found in downloading files")
+                }
+                categoryStore.delete(hash)
             }
-            categoryStore.delete(hash)
         }
     }
 
     @OptIn(ExperimentalStdlibApi::class)
-    fun deleteAllTorrents(deleteFiles: String?) {
-        val trackedHashes = (
-            amuleClient.getDownloadQueue().getOrThrow() +
-                amuleClient.getSharedFiles().getOrThrow()
-            )
-            .mapNotNull { it.fileHashHexString }
-            .filter { categoryStore.getCategory(it) != null }
-            .distinct()
+    suspend fun deleteAllTorrents(deleteFiles: String?) {
+        val trackedHashes = readAmule("list tracked downloads") {
+            (amuleClient.getDownloadQueue().getOrThrow() +
+                amuleClient.getSharedFiles().getOrThrow())
+                .mapNotNull { it.fileHashHexString }
+                .filter { categoryStore.getCategory(it) != null }
+                .distinct()
+        }
         deleteTorrent(trackedHashes, deleteFiles)
     }
 
-    fun getFile(hash: String) = getTorrentInfo(null)
+    suspend fun getFile(hash: String) = getTorrentInfo(null)
         .first { it.hash == hash }
         .let {
             TorrentFile(
@@ -152,7 +161,7 @@ class TorrentService(
             )
         }
 
-    fun getTorrentProperties(hash: String): TorrentProperties = getTorrentInfo(null)
+    suspend fun getTorrentProperties(hash: String): TorrentProperties = getTorrentInfo(null)
         .first { it.hash == hash }
         .let {
             TorrentProperties(
@@ -176,6 +185,16 @@ class TorrentService(
                     "Have you configured Radarr/Sonarr's download client priority correctly? See README.md", url
         )
         return NotFoundException("The provided link does not appear to be an Amarr link: $url")
+    }
+
+    private suspend fun <T> withAmule(block: () -> T): T =
+        amuleMutex.withLock { withContext(Dispatchers.IO) { block() } }
+
+    private suspend fun <T> readAmule(operation: String, block: () -> T): T = withAmule {
+        runCatching(block).getOrElse { firstError ->
+            log.warn("aMule EC failed while trying to {}; retrying once: {}", operation, firstError.message)
+            block()
+        }
     }
 
 }

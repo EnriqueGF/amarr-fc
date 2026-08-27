@@ -178,13 +178,13 @@ class AmuleIndexerTest : StringSpec({
         result.channel.item shouldBe emptyList()
     }
 
-    "should preserve broad results when filenames have no recognizable season marker" {
+    "should reject broad results when filenames have no recognizable season marker" {
         val file = searchFile("Show complete collection.mkv", 1)
         every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(file)))
 
         val result = AmuleIndexer(mockClient, logger).searchTv("Show", 1, null, 0, 100, emptyList())
 
-        result.channel.item.single().title shouldBe file.fileName
+        result.channel.item shouldBe emptyList()
     }
 
     "should return a movie category requested by Radarr" {

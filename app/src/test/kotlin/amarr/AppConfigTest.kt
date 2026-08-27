@@ -16,7 +16,7 @@ class AppConfigTest : StringSpec({
     "should build production configuration with safe defaults" {
         val config = AppConfig.fromEnvironment(required)
         config.port shouldBe 8080
-        config.finishedPath shouldBe "/data/amule/complete"
+        config.finishedPath shouldBe "/data/amuleCompleted"
         config.qbitUsername shouldBe "sonarr"
         config.searchCacheSeconds shouldBe 900
     }

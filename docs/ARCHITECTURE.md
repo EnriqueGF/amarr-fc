@@ -14,11 +14,11 @@ Jackett and amarr-fc results itself.
 
 | Purpose | Host | aMule | amarr-fc | Sonarr |
 |---|---|---|---|---|
-| Complete | `/mnt/media/amuleCompleted` | `/incoming` | `/incoming` | `/data/amule/complete` |
+| Complete | `/mnt/media/amuleCompleted` | `/incoming` | `/incoming` | `/data/amuleCompleted` |
 | Incomplete | `/mnt/media/amuleDownloading` | `/temp` | not mounted | not mounted |
 | State | `/srv/media/amarr-fc/config` | n/a | `/config` | n/a |
 
-The qBittorrent API reports `/data/amule/complete`, which is the path visible
+The qBittorrent API reports `/data/amuleCompleted`, which is the path visible
 inside Sonarr. amarr-fc also mounts `/incoming` only so a Sonarr delete request
 can remove a completed aMule file safely.
 
