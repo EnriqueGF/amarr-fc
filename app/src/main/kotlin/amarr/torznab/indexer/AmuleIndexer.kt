@@ -77,6 +77,7 @@ class AmuleIndexer(
                     },
                 )
             }
+            log.info("aMule search completed for '{}': {} raw candidate(s)", cleanQuery, files.size)
             cache[key] = CachedSearch(System.nanoTime(), files)
             files
         }

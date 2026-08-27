@@ -19,6 +19,7 @@ import jamule.AmuleClient
 import kotlinx.serialization.json.Json
 import org.jetbrains.annotations.VisibleForTesting
 import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 
 fun main() {
@@ -33,7 +34,7 @@ fun main() {
 @VisibleForTesting
 internal fun Application.app(config: AppConfig = AppConfig.fromEnvironment()) {
     setLogLevel(log, optionalEnv("AMARR_LOG_LEVEL", "INFO"))
-    val amuleClient = buildClient(log, config)
+    val amuleClient = buildClient(config)
     val amuleIndexer = AmuleIndexer(amuleClient, log, config.searchCacheSeconds)
     val ddunlimitednetClient = DdunlimitednetClient(
         CIO.create(),
@@ -86,12 +87,15 @@ private fun setLogLevel(logger: Logger, logLevel: String) {
     }
 }
 
-fun buildClient(logger: Logger, config: AppConfig): AmuleClient =
+fun buildClient(config: AppConfig): AmuleClient =
     AmuleClient(
         config.amuleHost,
         config.amulePort,
         config.amulePassword,
-        logger = logger
+        // jaMule logs every raw result and labels its normal search-window
+        // expiry as an error. Keep that internal trace disabled and emit
+        // concise, actionable search metrics from AmuleIndexer instead.
+        logger = LoggerFactory.getLogger("jamule.client")
     )
 
 private fun optionalEnv(name: String, default: String): String = optionalEnv(System.getenv(), name, default)
