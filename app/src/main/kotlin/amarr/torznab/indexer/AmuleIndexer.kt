@@ -174,7 +174,7 @@ class AmuleIndexer(
             val paddedEpisode = episodeText.padStart(2, '0')
             val exactEpisodePatterns = listOf(
                 "$startBoundary(?:s|t)0*$season${separator}e0*$episodeText$endBoundary",
-                "(?<![0-9])0*$season${separator}x${separator}0*$episodeText$endBoundary",
+                "${startBoundary}0*$season${separator}x${separator}0*$episodeText$endBoundary",
                 "$startBoundary(?:cap(?:itulo)?|episodio|episode)$separator" +
                     Regex.escape(season + paddedEpisode) + endBoundary,
             )
@@ -186,7 +186,7 @@ class AmuleIndexer(
 
         val episodeInSeasonPatterns = listOf(
             "$startBoundary(?:s|t)0*$season${separator}e[0-9]+$endBoundary",
-            "(?<![0-9])0*$season${separator}x${separator}[0-9]+$endBoundary",
+            "${startBoundary}0*$season${separator}x${separator}[0-9]+$endBoundary",
             "$startBoundary(?:cap(?:itulo)?|episodio|episode)$separator" +
                 Regex.escape(season) + "[0-9]{2}$endBoundary",
         )
@@ -284,7 +284,7 @@ class AmuleIndexer(
         val separator = "[ ._\\-]*"
         val patterns = listOf(
             Regex("(?<![a-z0-9])(?:s|t)0*$season${separator}e0*([0-9]+)(?![0-9])"),
-            Regex("(?<![0-9])0*$season${separator}x${separator}0*([0-9]+)(?![0-9])"),
+            Regex("(?<![a-z0-9])0*$season${separator}x${separator}0*([0-9]+)(?![0-9])"),
             Regex("(?<![a-z0-9])(?:cap(?:itulo)?|episodio|episode)$separator" + season + "([0-9]{2})(?![0-9])"),
         )
         return patterns.firstNotNullOfOrNull { pattern ->

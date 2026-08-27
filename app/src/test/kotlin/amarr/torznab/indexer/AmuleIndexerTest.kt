@@ -210,6 +210,23 @@ class AmuleIndexerTest : StringSpec({
         result.channel.response.total shouldBe 4
     }
 
+    "should not mistake an x265 codec suffix for a season episode" {
+        val files = listOf(
+            searchFile("Muertos SL 1x01.mkv", 1),
+            searchFile("Muertos SL 1x02.mkv", 2),
+            searchFile("Muertos SL - 4x01.x265.mkv", 3),
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(files))
+
+        val result = AmuleIndexer(mockClient, logger).searchTv("Muertos SL", 1, null, 0, 100, emptyList())
+
+        result.channel.item.map { it.title } shouldBe listOf(
+            "Muertos SL S01 PACK aMule",
+            "Muertos SL 1x01.mkv",
+            "Muertos SL 1x02.mkv",
+        )
+    }
+
     "should return a movie category requested by Radarr" {
         val file = searchFile("Movie 2026.mkv", 1)
         every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(file)))
