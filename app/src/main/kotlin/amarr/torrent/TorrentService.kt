@@ -47,7 +47,12 @@ class TorrentService(
             val activeMembers = pack.members.mapNotNull { downloadingByHash[it.hash.lowercase()] }
             val allComplete = pack.members.all { completedByHash.containsKey(it.hash.lowercase()) }
             val materialized = allComplete && runCatching {
-                materializePack(pack, completedByHash.mapValues { it.value.filePath })
+                materializePack(
+                    pack,
+                    completedByHash.mapValues { (_, file) ->
+                        CompletedFile(file.filePath, file.fileName)
+                    },
+                )
             }.onFailure { error ->
                 log.error("Could not materialize virtual pack {}: {}", pack.name, error.message)
             }.getOrDefault(false)
@@ -150,7 +155,10 @@ class TorrentService(
         materialized: Boolean,
     ): TorrentState = when {
         allComplete && materialized -> TorrentState.uploading
-        allComplete -> TorrentState.error
+        // aMule can report a shared file before its final path is visible in
+        // the bind mount. This is a transient completed/checking condition,
+        // not a qBittorrent download error.
+        allComplete -> TorrentState.checkingUP
         activeMembers.any { it.fileStatus == FileStatus.ERROR || it.fileStatus == FileStatus.INSUFFICIENT } ->
             TorrentState.error
         activeMembers.any { it.fileStatus == FileStatus.COMPLETING } -> TorrentState.checkingDL
@@ -160,14 +168,22 @@ class TorrentService(
         else -> TorrentState.metaDL
     }
 
-    private fun materializePack(pack: PackDownload, completedPaths: Map<String?, String?>): Boolean {
+    private fun materializePack(
+        pack: PackDownload,
+        completedFiles: Map<String?, CompletedFile>,
+    ): Boolean {
         val localRoot = Path(localFinishedPath).toAbsolutePath().normalize()
         val packDirectory = localPackPath(pack.hash)
         Files.createDirectories(packDirectory)
         return pack.members.all { member ->
-            val sourceText = completedPaths[member.hash.lowercase()] ?: return@all false
-            val source = Path(sourceText).toAbsolutePath().normalize()
-            if (!source.startsWith(localRoot) || !Files.isRegularFile(source)) return@all false
+            val completed = completedFiles[member.hash.lowercase()] ?: return@all false
+            val source = resolveCompletedSource(localRoot, completed, member)
+                ?: return@all false.also {
+                    log.warn(
+                        "Completed pack member is not visible locally: hash={}, path={}, name={}",
+                        member.hash, completed.path, completed.name,
+                    )
+                }
             val target = packDirectory.resolve(Path(member.name).fileName.toString()).normalize()
             if (!target.startsWith(packDirectory)) return@all false
             if (Files.exists(target)) {
@@ -177,6 +193,24 @@ class TorrentService(
                 true
             }
         }
+    }
+
+    private fun resolveCompletedSource(
+        localRoot: java.nio.file.Path,
+        completed: CompletedFile,
+        member: PackMember,
+    ): java.nio.file.Path? {
+        val reported = completed.path?.takeIf { it.isNotBlank() }?.let(::Path)
+        val candidates = listOfNotNull(
+            reported,
+            reported?.fileName?.let(localRoot::resolve),
+            completed.name?.takeIf { it.isNotBlank() }?.let(::Path)?.fileName?.let(localRoot::resolve),
+            Path(member.name).fileName?.let(localRoot::resolve),
+        )
+        return candidates.asSequence()
+            .map { it.toAbsolutePath().normalize() }
+            .filter { it.startsWith(localRoot) }
+            .firstOrNull(Files::isRegularFile)
     }
 
     private fun localPackPath(hash: String) =
@@ -347,5 +381,7 @@ class TorrentService(
     private companion object {
         const val PACK_DIRECTORY = ".amarr-packs"
     }
+
+    private data class CompletedFile(val path: String?, val name: String?)
 
 }

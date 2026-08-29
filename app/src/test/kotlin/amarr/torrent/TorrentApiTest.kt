@@ -230,7 +230,8 @@ class TorrentApiTest : StringSpec({
             listOf(
                 MockTransferringFile(
                     fileHashHexString = first.amuleHexHash(), fileName = first.name,
-                    filePath = firstPath.toString(), sizeFull = first.size,
+                    // aMule's shared-files EC response may omit the full path.
+                    filePath = null, sizeFull = first.size,
                 ),
                 MockTransferringFile(
                     fileHashHexString = second.amuleHexHash(), fileName = second.name,
