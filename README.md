@@ -44,6 +44,19 @@ episodes are available. Grabbing it queues every available real episode file
 in aMule and exposes them to Sonarr as one season directory; any gaps remain
 monitored in Sonarr for later searches.
 
+The stalled-download monitor can replace a virtual-pack member only when it
+has remained at zero bytes with no sources for the configured grace period.
+Alternatives must match the ordered series title and exact season/episode and
+must advertise at least one complete source. Attempts are persisted so a slot
+cannot loop through the same dead hashes. Relevant settings are:
+
+```text
+AMARR_STALLED_REPLACEMENT_ENABLED=true
+AMARR_STALLED_MINUTES=360
+AMARR_REPLACEMENT_INTERVAL_MINUTES=10
+AMARR_MAX_REPLACEMENTS_PER_RUN=8
+```
+
 ## Radarr
 
 Use the same Torznab URL and API key, select the Movies categories, and add a

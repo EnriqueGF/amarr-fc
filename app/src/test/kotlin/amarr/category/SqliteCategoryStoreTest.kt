@@ -42,4 +42,35 @@ class SqliteCategoryStoreTest : StringSpec({
             restored.getPack(pack.hash) shouldBe null
         }
     }
+
+    "should persist observations, attempts and replace one pack member" {
+        val directory = Files.createTempDirectory("amarr-fc-replacements")
+        val pack = PackDownload(
+            hash = "ffeeddccbbaa99887766554433221100",
+            name = "Muertos SL S01 PACK aMule",
+            category = "sonarr",
+            members = listOf(
+                PackMember("00112233445566778899aabbccddeeff", "Muertos SL S01E01.mkv", 100),
+                PackMember("112233445566778899aabbccddeeff00", "Muertos SL S01E02.mkv", 200),
+            ),
+        )
+        val replacement = PackMember(
+            "2233445566778899aabbccddeeff0011", "Muertos SL S01E01 1080p.mkv", 300
+        )
+        SqliteCategoryStore(directory.toString()).use { store ->
+            store.storePack(pack)
+            pack.members.forEach { store.store(pack.category, it.hash) }
+            val first = store.observeDownload(pack.members.first().hash, 0, false, 10_000)
+            val active = store.observeDownload(pack.members.first().hash, 0, true, 20_000)
+            first.lastActivityAt shouldBe first.firstSeenAt
+            active.lastActivityAt shouldBe 20_000
+
+            store.markAttempt("slot", pack.members.first().hash, 30_000)
+            store.attemptedHashes("slot") shouldBe setOf(pack.members.first().hash)
+            store.replacePackMember(pack.hash, pack.members.first().hash, replacement) shouldBe true
+            store.getPack(pack.hash)!!.members.first() shouldBe replacement
+            store.getCategory(replacement.hash) shouldBe "sonarr"
+            store.getCategory(pack.members.first().hash) shouldBe null
+        }
+    }
 })

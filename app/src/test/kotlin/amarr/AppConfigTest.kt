@@ -19,6 +19,10 @@ class AppConfigTest : StringSpec({
         config.finishedPath shouldBe "/data/amuleCompleted"
         config.qbitUsername shouldBe "sonarr"
         config.searchCacheSeconds shouldBe 900
+        config.stalledReplacementEnabled shouldBe true
+        config.stalledMinutes shouldBe 360
+        config.replacementIntervalMinutes shouldBe 10
+        config.maxReplacementsPerRun shouldBe 8
     }
 
     "should require API and qBittorrent secrets" {

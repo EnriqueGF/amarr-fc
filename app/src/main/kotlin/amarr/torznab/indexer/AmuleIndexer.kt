@@ -15,6 +15,14 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+data class ReplacementCandidate(
+    val hash: String,
+    val name: String,
+    val size: Long,
+    val completeSources: Int,
+    val sources: Int,
+)
+
 class AmuleIndexer(
     private val amuleClient: AmuleClient,
     private val log: Logger,
@@ -80,6 +88,35 @@ class AmuleIndexer(
 
     override suspend fun capabilities(): Caps = Caps()
 
+    /** Fresh, strict candidates used only to replace a stalled pack member. */
+    suspend fun findSeasonReplacementCandidates(
+        query: String,
+        season: Int,
+        excludedHashes: Set<String>,
+    ): Map<Int, ReplacementCandidate> {
+        val cleanQuery = normalizeSearchQuery(query)
+        val criteria = TvCriteria(season, null)
+        val excluded = excludedHashes.mapTo(hashSetOf()) { it.lowercase() }
+        return searchFiles(cleanQuery, refresh = true)
+            .asSequence()
+            .filter(::isRelevantVideoResult)
+            .filter { it.completeSourceCount > 0 }
+            .filter { matchesOrderedTitle(it.fileName, cleanQuery) }
+            .mapNotNull { file -> episodeNumber(file.fileName, season)?.let { it to file } }
+            .filterNot { (_, file) -> hashHex(file.hash) in excluded }
+            .sortedByDescending { (_, file) -> score(file, cleanQuery, criteria) }
+            .distinctBy { (episode, _) -> episode }
+            .associate { (episode, file) ->
+                episode to ReplacementCandidate(
+                    hash = hashHex(file.hash),
+                    name = file.fileName,
+                    size = file.sizeFull,
+                    completeSources = file.completeSourceCount.toInt(),
+                    sources = file.sourceCount.toInt(),
+                )
+            }
+    }
+
     private fun isRelevantVideoResult(file: SearchFile): Boolean {
         val extension = file.fileName.substringAfterLast('.', missingDelimiterValue = "").lowercase()
         if (extension in EXCLUDED_EXTENSIONS) {
@@ -90,11 +127,11 @@ class AmuleIndexer(
         return looksLikeVideo && file.sourceCount > 0
     }
 
-    private suspend fun searchFiles(cleanQuery: String): List<SearchFile> {
+    private suspend fun searchFiles(cleanQuery: String, refresh: Boolean = false): List<SearchFile> {
         val key = cleanQuery.lowercase()
-        cached(key)?.let { return it }
+        if (!refresh) cached(key)?.let { return it }
         return amuleMutex.withLock {
-            cached(key)?.let { return@withLock it }
+            if (!refresh) cached(key)?.let { return@withLock it }
             log.info("Running serialized aMule search for: {}", cleanQuery)
             val files = withContext(Dispatchers.IO) {
                 // jaMule may either throw directly or return Result.failure,
@@ -127,6 +164,8 @@ class AmuleIndexer(
         return null
     }
 
+    private fun hashHex(hash: ByteArray): String = hash.joinToString("") { "%02x".format(it) }
+
     private fun score(file: SearchFile, query: String, tvCriteria: TvCriteria?): Long {
         val nameTokens = normalizedTokens(file.fileName)
         val matchedTokens = titleTokens(query).count { it in nameTokens }
@@ -149,6 +188,15 @@ class AmuleIndexer(
         if (expected.isEmpty()) return true
         val actual = normalizedTokens(fileName)
         return expected.all { it in actual }
+    }
+
+    private fun matchesOrderedTitle(fileName: String, query: String): Boolean {
+        val expected = normalizeSearchQuery(query).lowercase()
+        val actual = normalizeSearchQuery(fileName).lowercase()
+        val phrase = expected.split(' ').filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) }
+        return expected.isNotBlank() && Regex(
+            "(?<![\\p{L}\\p{N}])$phrase(?![\\p{L}\\p{N}])"
+        ).containsMatchIn(actual)
     }
 
     private fun normalizedTokens(text: String): Set<String> =

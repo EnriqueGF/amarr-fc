@@ -66,6 +66,26 @@ class SqliteCategoryStore(storePath: String) : CategoryStore, AutoCloseable {
                 )
                 """.trimIndent()
             )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS download_observations(
+                    hash TEXT PRIMARY KEY,
+                    first_seen_at INTEGER NOT NULL,
+                    last_activity_at INTEGER NOT NULL,
+                    bytes INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+            statement.execute(
+                """
+                CREATE TABLE IF NOT EXISTS replacement_attempts(
+                    logical_key TEXT NOT NULL,
+                    hash TEXT NOT NULL,
+                    attempted_at INTEGER NOT NULL,
+                    PRIMARY KEY(logical_key, hash)
+                )
+                """.trimIndent()
+            )
         }
     }
 
@@ -231,6 +251,146 @@ class SqliteCategoryStore(storePath: String) : CategoryStore, AutoCloseable {
         connection.prepareStatement("DELETE FROM packs WHERE hash=?").use { statement ->
             statement.setString(1, hash.take(32).lowercase())
             statement.executeUpdate()
+        }
+    }
+
+    @Synchronized
+    override fun observeDownload(
+        hash: String,
+        bytes: Long,
+        active: Boolean,
+        now: Long,
+    ): DownloadObservation {
+        val normalizedHash = hash.lowercase()
+        val existing = connection.prepareStatement(
+            "SELECT first_seen_at, last_activity_at, bytes FROM download_observations WHERE hash=?"
+        ).use { statement ->
+            statement.setString(1, normalizedHash)
+            statement.executeQuery().use { result ->
+                if (result.next()) DownloadObservation(
+                    result.getLong("first_seen_at"),
+                    result.getLong("last_activity_at"),
+                    result.getLong("bytes"),
+                ) else null
+            }
+        }
+        val firstSeen = existing?.firstSeenAt ?: connection.prepareStatement(
+            "SELECT updated_at FROM downloads WHERE hash=?"
+        ).use { statement ->
+            statement.setString(1, normalizedHash)
+            statement.executeQuery().use { result -> if (result.next()) result.getLong(1) else now }
+        }
+        val lastActivity = when {
+            existing == null -> firstSeen
+            active || bytes > existing.bytes -> now
+            else -> existing.lastActivityAt
+        }
+        connection.prepareStatement(
+            """
+            INSERT INTO download_observations(hash, first_seen_at, last_activity_at, bytes)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(hash) DO UPDATE SET
+                last_activity_at=excluded.last_activity_at,
+                bytes=excluded.bytes
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, normalizedHash)
+            statement.setLong(2, firstSeen)
+            statement.setLong(3, lastActivity)
+            statement.setLong(4, bytes)
+            statement.executeUpdate()
+        }
+        return DownloadObservation(firstSeen, lastActivity, bytes)
+    }
+
+    @Synchronized
+    override fun attemptedHashes(logicalKey: String): Set<String> = connection.prepareStatement(
+        "SELECT hash FROM replacement_attempts WHERE logical_key=?"
+    ).use { statement ->
+        statement.setString(1, logicalKey)
+        statement.executeQuery().use { result ->
+            buildSet { while (result.next()) add(result.getString(1)) }
+        }
+    }
+
+    @Synchronized
+    override fun markAttempt(logicalKey: String, hash: String, now: Long) {
+        connection.prepareStatement(
+            "INSERT OR IGNORE INTO replacement_attempts(logical_key, hash, attempted_at) VALUES (?, ?, ?)"
+        ).use { statement ->
+            statement.setString(1, logicalKey)
+            statement.setString(2, hash.lowercase())
+            statement.setLong(3, now)
+            statement.executeUpdate()
+        }
+    }
+
+    @Synchronized
+    override fun replacePackMember(
+        packHash: String,
+        oldHash: String,
+        replacement: PackMember,
+    ): Boolean {
+        require(replacement.hash.matches(Regex("[0-9a-fA-F]{32}"))) { "invalid replacement hash" }
+        require(replacement.name.isNotBlank() && replacement.size > 0) { "invalid replacement member" }
+        val normalizedPack = packHash.take(32).lowercase()
+        val normalizedOld = oldHash.lowercase()
+        val normalizedNew = replacement.hash.lowercase()
+        val category = getPack(normalizedPack)?.category ?: return false
+        val previousAutoCommit = connection.autoCommit
+        connection.autoCommit = false
+        try {
+            val updated = connection.prepareStatement(
+                """
+                UPDATE pack_members SET member_hash=?, name=?, size=?
+                WHERE pack_hash=? AND member_hash=?
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, normalizedNew)
+                statement.setString(2, replacement.name)
+                statement.setLong(3, replacement.size)
+                statement.setString(4, normalizedPack)
+                statement.setString(5, normalizedOld)
+                statement.executeUpdate()
+            }
+            if (updated != 1) {
+                connection.rollback()
+                return false
+            }
+            connection.prepareStatement(
+                """
+                INSERT INTO downloads(hash, category, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(hash) DO UPDATE SET category=excluded.category, updated_at=excluded.updated_at
+                """.trimIndent()
+            ).use { statement ->
+                statement.setString(1, normalizedNew)
+                statement.setString(2, category)
+                statement.setLong(3, System.currentTimeMillis())
+                statement.executeUpdate()
+            }
+            val oldStillReferenced = connection.prepareStatement(
+                "SELECT 1 FROM pack_members WHERE member_hash=? LIMIT 1"
+            ).use { statement ->
+                statement.setString(1, normalizedOld)
+                statement.executeQuery().use { it.next() }
+            }
+            if (!oldStillReferenced) {
+                connection.prepareStatement("DELETE FROM downloads WHERE hash=?").use { statement ->
+                    statement.setString(1, normalizedOld)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("DELETE FROM download_observations WHERE hash=?").use { statement ->
+                    statement.setString(1, normalizedOld)
+                    statement.executeUpdate()
+                }
+            }
+            connection.commit()
+            return true
+        } catch (error: Exception) {
+            connection.rollback()
+            throw error
+        } finally {
+            connection.autoCommit = previousAutoCommit
         }
     }
 

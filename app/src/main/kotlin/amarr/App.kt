@@ -4,6 +4,7 @@ import amarr.category.SqliteCategoryStore
 import amarr.health.healthApi
 import amarr.security.QbitAuth
 import amarr.torrent.torrentApi
+import amarr.torrent.StalledDownloadMonitor
 import amarr.torznab.indexer.AmuleIndexer
 import amarr.torznab.indexer.ddunlimitednet.DdunlimitednetClient
 import amarr.torznab.indexer.ddunlimitednet.DdunlimitednetIndexer
@@ -16,6 +17,7 @@ import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import jamule.AmuleClient
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
 import org.jetbrains.annotations.VisibleForTesting
@@ -67,6 +69,31 @@ internal fun Application.app(config: AppConfig = AppConfig.fromEnvironment()) {
         amuleMutex,
     )
     healthApi(amuleClient, config.configPath, amuleMutex)
+
+    val replacementJob = if (config.stalledReplacementEnabled) launch {
+        val monitor = StalledDownloadMonitor(
+            amuleClient = amuleClient,
+            indexer = amuleIndexer,
+            categoryStore = categoryStore,
+            amuleMutex = amuleMutex,
+            log = log,
+            stallMillis = config.stalledMinutes * 60_000L,
+            maxReplacementsPerRun = config.maxReplacementsPerRun,
+        )
+        delay(30_000L)
+        while (isActive) {
+            runCatching { monitor.runOnce() }
+                .onSuccess { count ->
+                    if (count > 0) log.info("Replaced {} stalled aMule pack member(s)", count)
+                }
+                .onFailure { error -> log.error("Stalled download monitor failed", error) }
+            delay(config.replacementIntervalMinutes * 60_000L)
+        }
+    } else null
+    monitor.subscribe(ApplicationStopping) {
+        replacementJob?.cancel()
+        categoryStore.close()
+    }
 }
 
 @VisibleForTesting

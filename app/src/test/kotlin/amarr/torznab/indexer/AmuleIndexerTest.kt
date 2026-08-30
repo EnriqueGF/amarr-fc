@@ -243,6 +243,53 @@ class AmuleIndexerTest : StringSpec({
         pack.packMembers().map { it.name }.toSet() shouldBe files.map { it.fileName }.toSet()
     }
 
+    "should choose only complete semantic replacements for a stalled episode" {
+        val incomplete = searchFile("Muertos SL S01E03 incomplete.mkv", 20).copy(
+            completeSourceCount = 0,
+            sourceCount = 20,
+        )
+        val weaker = searchFile("Muertos SL 1x03 720p.mkv", 21).copy(
+            completeSourceCount = 1,
+            sourceCount = 2,
+        )
+        val stronger = searchFile("Muertos SL S01E03 1080p.mkv", 22).copy(
+            completeSourceCount = 3,
+            sourceCount = 4,
+        )
+        val wrongTitle = searchFile("Love and Death S01E03.mkv", 23).copy(
+            completeSourceCount = 10,
+            sourceCount = 20,
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(
+            SearchResultsResponse(listOf(incomplete, weaker, stronger, wrongTitle))
+        )
+
+        val candidates = AmuleIndexer(mockClient, logger).findSeasonReplacementCandidates(
+            "Muertos SL", 1, emptySet()
+        )
+
+        candidates.keys shouldBe setOf(3)
+        candidates.getValue(3).name shouldBe stronger.fileName
+        candidates.getValue(3).completeSources shouldBe 3
+    }
+
+    "should not replace Dragon Ball Super with Super Dragon Ball Heroes" {
+        val correct = searchFile("1x11 - Dragon Ball Super.mkv", 30)
+        val wrongFranchise = searchFile("Super Dragon Ball Heroes 1x11 Castellano.mkv", 31).copy(
+            completeSourceCount = 20,
+            sourceCount = 30,
+        )
+        every { mockClient.searchSync(any(), any()) } returns Result.success(
+            SearchResultsResponse(listOf(wrongFranchise, correct))
+        )
+
+        val candidate = AmuleIndexer(mockClient, logger)
+            .findSeasonReplacementCandidates("Dragon Ball Super", 1, emptySet())
+            .getValue(11)
+
+        candidate.name shouldBe correct.fileName
+    }
+
     "should return a movie category requested by Radarr" {
         val file = searchFile("Movie 2026.mkv", 1)
         every { mockClient.searchSync(any(), any()) } returns Result.success(SearchResultsResponse(listOf(file)))

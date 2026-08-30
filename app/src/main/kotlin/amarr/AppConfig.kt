@@ -14,6 +14,10 @@ data class AppConfig(
     val qbitUsername: String,
     val qbitPassword: String,
     val searchCacheSeconds: Long,
+    val stalledReplacementEnabled: Boolean,
+    val stalledMinutes: Long,
+    val replacementIntervalMinutes: Long,
+    val maxReplacementsPerRun: Int,
 ) {
     companion object {
         fun fromEnvironment(env: Map<String, String> = System.getenv()): AppConfig {
@@ -26,6 +30,11 @@ data class AppConfig(
             val cacheSeconds = optional(env, "AMARR_SEARCH_CACHE_SECONDS", "900").toLongOrNull()
                 ?: error("AMARR_SEARCH_CACHE_SECONDS must be a number")
             require(cacheSeconds >= 0) { "AMARR_SEARCH_CACHE_SECONDS cannot be negative" }
+            val stalledMinutes = positiveLong(env, "AMARR_STALLED_MINUTES", "360")
+            val replacementInterval = positiveLong(env, "AMARR_REPLACEMENT_INTERVAL_MINUTES", "10")
+            val maxReplacements = optional(env, "AMARR_MAX_REPLACEMENTS_PER_RUN", "8").toIntOrNull()
+                ?: error("AMARR_MAX_REPLACEMENTS_PER_RUN must be a number")
+            require(maxReplacements in 1..50) { "AMARR_MAX_REPLACEMENTS_PER_RUN must be between 1 and 50" }
 
             return AppConfig(
                 port = port,
@@ -38,6 +47,12 @@ data class AppConfig(
                 qbitUsername = optional(env, "AMARR_QBIT_USERNAME", "sonarr"),
                 qbitPassword = secret(env, "AMARR_QBIT_PASSWORD"),
                 searchCacheSeconds = cacheSeconds,
+                stalledReplacementEnabled = optional(env, "AMARR_STALLED_REPLACEMENT_ENABLED", "true")
+                    .toBooleanStrictOrNull()
+                    ?: error("AMARR_STALLED_REPLACEMENT_ENABLED must be true or false"),
+                stalledMinutes = stalledMinutes,
+                replacementIntervalMinutes = replacementInterval,
+                maxReplacementsPerRun = maxReplacements,
             )
         }
 
@@ -46,6 +61,12 @@ data class AppConfig(
 
         private fun optional(env: Map<String, String>, name: String, default: String): String =
             env[name]?.takeIf { it.isNotBlank() } ?: default
+
+        private fun positiveLong(env: Map<String, String>, name: String, default: String): Long {
+            val value = optional(env, name, default).toLongOrNull() ?: error("$name must be a number")
+            require(value > 0) { "$name must be greater than zero" }
+            return value
+        }
 
         private fun secret(env: Map<String, String>, name: String): String {
             env["${name}_FILE"]?.takeIf { it.isNotBlank() }?.let { file ->
