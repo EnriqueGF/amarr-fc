@@ -254,11 +254,22 @@ class TorrentApiTest : StringSpec({
             torrent["state"]!!.jsonPrimitive.content shouldBe "uploading"
             torrent["content_path"]!!.jsonPrimitive.content shouldBe
                 "/finished/.amarr-packs/${packLink.amuleHexHash()}"
+
+            val packDirectory = localFinished.resolve(".amarr-packs").resolve(packLink.amuleHexHash())
+            Files.isSameFile(firstPath, packDirectory.resolve(first.name)) shouldBe true
+            Files.isSameFile(secondPath, packDirectory.resolve(second.name)) shouldBe true
+            Files.setLastModifiedTime(
+                packDirectory.resolve(".amarr-ready"),
+                java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 16 * 60 * 1000L),
+            )
+
+            val retired = client.get("/api/v2/torrents/info?category=sonarr")
+            Json.parseToJsonElement(retired.bodyAsText()).jsonArray.size shouldBe 0
         }
 
-        val packDirectory = localFinished.resolve(".amarr-packs").resolve(packLink.amuleHexHash())
-        Files.isSameFile(firstPath, packDirectory.resolve(first.name)) shouldBe true
-        Files.isSameFile(secondPath, packDirectory.resolve(second.name)) shouldBe true
+        Files.exists(firstPath) shouldBe true
+        Files.exists(secondPath) shouldBe true
+        categoryStore.getPack(packLink.amuleHexHash()) shouldBe null
     }
 
     "should get categories" {

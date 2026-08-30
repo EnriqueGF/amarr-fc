@@ -43,7 +43,7 @@ class TorrentService(
             pack.members.map { it.hash.lowercase() }
         }
 
-        val packInfo = packs.map { pack ->
+        val packInfo = packs.mapNotNull { pack ->
             val activeMembers = pack.members.mapNotNull { downloadingByHash[it.hash.lowercase()] }
             val allComplete = pack.members.all { completedByHash.containsKey(it.hash.lowercase()) }
             val materialized = allComplete && runCatching {
@@ -56,6 +56,14 @@ class TorrentService(
             }.onFailure { error ->
                 log.error("Could not materialize virtual pack {}: {}", pack.name, error.message)
             }.getOrDefault(false)
+            if (materialized && packImportWindowExpired(pack)) {
+                retirePack(pack)
+                log.info(
+                    "Retired imported virtual pack after the import window: {} ({})",
+                    pack.name, pack.hash,
+                )
+                return@mapNotNull null
+            }
             val totalSize = pack.members.sumOf { it.size }
             val downloaded = pack.members.sumOf { member ->
                 when {
@@ -175,7 +183,7 @@ class TorrentService(
         val localRoot = Path(localFinishedPath).toAbsolutePath().normalize()
         val packDirectory = localPackPath(pack.hash)
         Files.createDirectories(packDirectory)
-        return pack.members.all { member ->
+        val complete = pack.members.all { member ->
             val completed = completedFiles[member.hash.lowercase()] ?: return@all false
             val source = resolveCompletedSource(localRoot, completed, member)
                 ?: return@all false.also {
@@ -193,6 +201,11 @@ class TorrentService(
                 true
             }
         }
+        if (complete) {
+            val marker = packDirectory.resolve(PACK_READY_MARKER)
+            if (!Files.exists(marker)) Files.createFile(marker)
+        }
+        return complete
     }
 
     private fun resolveCompletedSource(
@@ -287,16 +300,7 @@ class TorrentService(
                             deleteSharedFileByHash(memberHash)
                         }
                     }
-                    deletePackLinks(pack)
-                    categoryStore.deletePack(hash)
-                    categoryStore.delete(hash)
-                    val remainingMembers = categoryStore.getPacks().flatMapTo(hashSetOf()) { remainingPack ->
-                        remainingPack.members.map { it.hash.lowercase() }
-                    }
-                    pack.members
-                        .map { it.hash.lowercase() }
-                        .filterNot { it in remainingMembers }
-                        .forEach(categoryStore::delete)
+                    retirePack(pack)
                 } else if (downloadingFiles.any { it.fileHashHexString?.lowercase() == hash }) {
                     amuleClient.sendDownloadCommand(hash.hexToByteArray(), DownloadCommand.DELETE).getOrThrow()
                 } else if (deleteFiles == "true") {
@@ -357,7 +361,33 @@ class TorrentService(
             val target = directory.resolve(Path(member.name).fileName.toString()).normalize()
             if (target.startsWith(directory)) Files.deleteIfExists(target)
         }
+        Files.deleteIfExists(directory.resolve(PACK_READY_MARKER))
         Files.deleteIfExists(directory)
+    }
+
+    private fun packImportWindowExpired(pack: PackDownload): Boolean {
+        val marker = localPackPath(pack.hash).resolve(PACK_READY_MARKER)
+        if (!Files.isRegularFile(marker)) return false
+        return System.currentTimeMillis() - Files.getLastModifiedTime(marker).toMillis() >=
+            PACK_IMPORT_WINDOW_MILLIS
+    }
+
+    /**
+     * Removes only amarr's virtual pack and tracking metadata. The completed
+     * aMule files and files already imported by Sonarr/Radarr are untouched.
+     */
+    private fun retirePack(pack: PackDownload) {
+        val hash = pack.hash.take(32).lowercase()
+        deletePackLinks(pack)
+        categoryStore.deletePack(hash)
+        categoryStore.delete(hash)
+        val remainingMembers = categoryStore.getPacks().flatMapTo(hashSetOf()) { remainingPack ->
+            remainingPack.members.map { it.hash.lowercase() }
+        }
+        pack.members
+            .map { it.hash.lowercase() }
+            .filterNot { it in remainingMembers }
+            .forEach(categoryStore::delete)
     }
 
     private fun nonAmarrLink(url: String): Exception {
@@ -380,6 +410,8 @@ class TorrentService(
 
     private companion object {
         const val PACK_DIRECTORY = ".amarr-packs"
+        const val PACK_READY_MARKER = ".amarr-ready"
+        const val PACK_IMPORT_WINDOW_MILLIS = 15 * 60 * 1000L
     }
 
     private data class CompletedFile(val path: String?, val name: String?)
