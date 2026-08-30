@@ -1,0 +1,8 @@
+[Unit]
+Description=Keep aMule ports and discovery networks available
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/amule-network-watchdog

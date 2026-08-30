@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+AMULE_HOST_IP="${AMULE_HOST_IP:-192.168.1.133}"
+
+ensure_mapping() {
+    protocol="$1"
+    port="$2"
+    description="$3"
+    if ! upnpc -l 2>/dev/null | grep -Eq "$protocol[[:space:]]+$port->$AMULE_HOST_IP:$port"; then
+        upnpc -d "$port" "$protocol" >/dev/null 2>&1 || true
+        upnpc -e "$description" -a "$AMULE_HOST_IP" "$port" "$port" "$protocol" >/dev/null
+    fi
+}
+
+ensure_mapping TCP 4700 "aMule TCP"
+ensure_mapping UDP 4703 "aMule server UDP"
+ensure_mapping UDP 4672 "aMule Kad UDP"
+
+if ! docker inspect --format '{{.State.Running}}' amule 2>/dev/null | grep -qx true; then
+    docker start amule >/dev/null
+    exit 0
+fi
+
+status="$(docker exec amule sh -lc 'printf "status\nquit\n" | amulecmd -P "$GUI_PWD" 2>&1' || true)"
+if ! printf '%s' "$status" | grep -q 'Kad: Connected'; then
+    docker exec amule sh -lc 'amulecmd -P "$GUI_PWD" -c "connect kad"' >/dev/null 2>&1 || true
+fi
+if ! printf '%s' "$status" | grep -q 'eD2k: Connected'; then
+    docker exec amule sh -lc 'amulecmd -P "$GUI_PWD" -c "connect ed2k"' >/dev/null 2>&1 || true
+fi

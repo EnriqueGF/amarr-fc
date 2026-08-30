@@ -61,6 +61,11 @@ Deployment files and configuration examples live in [`deploy/`](deploy/).
 The complete runtime design is documented in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+For hosts behind a UPnP router, `deploy/amule-network-watchdog` keeps the
+aMule TCP, server UDP and Kad UDP mappings alive and reconnects discovery
+networks after transient failures. Install the accompanying systemd service
+and timer on the Docker host.
+
 Create a mode-0600 runtime environment without committing secrets:
 
 ```bash

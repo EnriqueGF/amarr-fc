@@ -1,0 +1,11 @@
+[Unit]
+Description=Check aMule network discovery every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
